@@ -1,0 +1,34 @@
+{
+  "name": "rf-site-assessment",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "RF Site Assessment Tool for ABOnAir 612 + RF Explorer 6G WB Plus",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint . --ext js,jsx"
+  },
+  "dependencies": {
+    "lucide-react": "^0.294.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.43",
+    "@types/react-dom": "^18.2.17",
+    "@vitejs/plugin-react": "^4.2.1",
+    "vite": "^5.0.8"
+  },
+  "keywords": [
+    "rf",
+    "spectrum",
+    "monitoring",
+    "wireless",
+    "video",
+    "abonair",
+    "rf-explorer"
+  ],
+  "author": "",
+  "license": "MIT"
+}
