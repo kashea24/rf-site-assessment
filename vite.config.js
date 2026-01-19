@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
-    open: true
+    open: false  // Protocol: Don't auto-open browser tabs
   },
   build: {
     outDir: 'dist',
