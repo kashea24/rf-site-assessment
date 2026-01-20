@@ -65,6 +65,20 @@ const logger = {
 
 ---
 
+### 4. Port Configuration
+
+**Rule:** Server runs on port 3003. Do NOT change the port as part of troubleshooting.
+
+**Implementation:**
+- Development server: `localhost:3003`
+- Port is fixed and should not be modified
+- If port conflicts occur, user will resolve externally
+- Do not suggest port changes in troubleshooting
+
+**Status:** Active
+
+---
+
 ## How to Use This Protocol
 
 1. **Adding Rules:** When user says "make this part of protocol" or similar, add it to this document with:
