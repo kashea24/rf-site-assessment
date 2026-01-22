@@ -1002,6 +1002,8 @@ export default function RFSiteAssessment() {
   // Interference analysis data
   const [interferenceData, setInterferenceData] = useState(null);
   const [loadingInterference, setLoadingInterference] = useState(false);
+  const [interferenceHistory, setInterferenceHistory] = useState([]);
+  const [showInterferenceHistory, setShowInterferenceHistory] = useState(false);
 
   // Load saved wizard data from localStorage on mount
   useEffect(() => {
@@ -1113,24 +1115,66 @@ export default function RFSiteAssessment() {
   // Fetch interference data when venue location is selected
   useEffect(() => {
     if (wizardData.locationData?.lat && wizardData.locationData?.lon) {
-      setLoadingInterference(true);
-      
-      getNearbyInterferenceSources(wizardData.locationData.lat, wizardData.locationData.lon)
-        .then(data => {
-          setInterferenceData(data);
-          logger.info('Wizard', 'Interference analysis complete', { 
-            riskCount: data.risks.length,
-            cellTowers: data.cellTowers.length 
-          });
-        })
-        .catch(error => {
-          logger.error('Wizard', 'Failed to fetch interference data', { error: error.message });
-        })
-        .finally(() => {
-          setLoadingInterference(false);
-        });
+      fetchInterferenceData();
     }
   }, [wizardData.locationData]);
+  
+  // Function to fetch and cache interference data
+  const fetchInterferenceData = useCallback(() => {
+    if (!wizardData.locationData?.lat || !wizardData.locationData?.lon) return;
+    
+    setLoadingInterference(true);
+    
+    getNearbyInterferenceSources(wizardData.locationData.lat, wizardData.locationData.lon)
+      .then(data => {
+        const timestampedData = {
+          ...data,
+          timestamp: new Date().toISOString(),
+          venueName: wizardData.venueName,
+          venueAddress: wizardData.venueAddress,
+          coordinates: {
+            lat: wizardData.locationData.lat,
+            lon: wizardData.locationData.lon
+          }
+        };
+        
+        setInterferenceData(timestampedData);
+        
+        // Add to history (keep last 10 reports)
+        setInterferenceHistory(prev => {
+          const updated = [timestampedData, ...prev].slice(0, 10);
+          // Save to localStorage
+          localStorage.setItem('rfInterferenceHistory', JSON.stringify(updated));
+          return updated;
+        });
+        
+        logger.info('Wizard', 'Interference analysis complete', { 
+          riskCount: data.risks.length,
+          cellTowers: data.cellTowers.length,
+          timestamp: timestampedData.timestamp
+        });
+      })
+      .catch(error => {
+        logger.error('Wizard', 'Failed to fetch interference data', { error: error.message });
+      })
+      .finally(() => {
+        setLoadingInterference(false);
+      });
+  }, [wizardData.locationData, wizardData.venueName, wizardData.venueAddress]);
+  
+  // Load interference history from localStorage on mount
+  useEffect(() => {
+    const savedHistory = localStorage.getItem('rfInterferenceHistory');
+    if (savedHistory) {
+      try {
+        const parsed = JSON.parse(savedHistory);
+        setInterferenceHistory(parsed);
+        logger.info('App', 'Loaded interference history from localStorage', { count: parsed.length });
+      } catch (e) {
+        logger.error('App', 'Failed to load interference history', { error: e.message });
+      }
+    }
+  }, []);
 
   // Initialize connection manager
   useEffect(() => {
@@ -2006,22 +2050,23 @@ export default function RFSiteAssessment() {
                       </label>
                       
                       {/* Show autocomplete search when no venue selected */}
-                      {!wizardData.venueName && (
-                        <div 
-                          ref={addressInputRef}
-                          id="geoapify-autocomplete-container"
-                          style={{
-                            width: '100%',
-                            position: 'relative'
-                          }}
-                        />
-                      )}
-                      
-                      {!wizardData.venueName && (
-                        <div style={{ fontSize: '11px', color: '#6b7785', marginTop: '6px' }}>
-                          💡 Search for venue by name or location
-                        </div>
-                      )}
+                      {!wizardData.venueName ? (
+                        <>
+                          <div 
+                            key="geoapify-search"
+                            ref={addressInputRef}
+                            id="geoapify-autocomplete-container"
+                            style={{
+                              width: '100%',
+                              position: 'relative',
+                              minHeight: '48px'
+                            }}
+                          />
+                          <div style={{ fontSize: '11px', color: '#6b7785', marginTop: '6px' }}>
+                            💡 Search for venue by name or location
+                          </div>
+                        </>
+                      ) : null}
                       
                       {/* Display selected venue details */}
                       {wizardData.venueName && wizardData.locationData && (
@@ -2110,9 +2155,54 @@ export default function RFSiteAssessment() {
                       {/* Interference Analysis */}
                       {wizardData.venueName && wizardData.locationData && (
                         <div style={{ marginTop: '16px' }}>
-                          <label style={{ fontSize: '12px', color: '#6b7785', fontWeight: '600', display: 'block', marginBottom: '12px' }}>
-                            RF INTERFERENCE ANALYSIS
-                          </label>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                            <label style={{ fontSize: '12px', color: '#6b7785', fontWeight: '600', display: 'block' }}>
+                              RF INTERFERENCE ANALYSIS
+                            </label>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              {interferenceHistory.length > 0 && (
+                                <button
+                                  onClick={() => setShowInterferenceHistory(!showInterferenceHistory)}
+                                  style={{
+                                    padding: '4px 8px',
+                                    backgroundColor: '#2d3748',
+                                    border: '1px solid #4a5568',
+                                    borderRadius: '4px',
+                                    color: '#9ca3af',
+                                    fontSize: '10px',
+                                    fontWeight: '600',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '4px'
+                                  }}
+                                >
+                                  <Clock size={10} />
+                                  History ({interferenceHistory.length})
+                                </button>
+                              )}
+                              <button
+                                onClick={fetchInterferenceData}
+                                disabled={loadingInterference}
+                                style={{
+                                  padding: '4px 8px',
+                                  backgroundColor: loadingInterference ? '#2d3748' : '#06b6d4',
+                                  border: 'none',
+                                  borderRadius: '4px',
+                                  color: loadingInterference ? '#6b7785' : '#0a0e14',
+                                  fontSize: '10px',
+                                  fontWeight: '600',
+                                  cursor: loadingInterference ? 'not-allowed' : 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                              >
+                                <RefreshCw size={10} style={{ animation: loadingInterference ? 'spin 1s linear infinite' : 'none' }} />
+                                Refresh
+                              </button>
+                            </div>
+                          </div>
                           
                           {loadingInterference ? (
                             <div style={{
@@ -2238,9 +2328,22 @@ export default function RFSiteAssessment() {
                                   padding: '8px',
                                   textAlign: 'center',
                                   borderTop: '1px solid #2d3748',
-                                  marginTop: '4px'
+                                  marginTop: '4px',
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center'
                                 }}>
-                                  💡 This analysis provides general guidance. Always perform on-site RF scans for accurate interference mapping.
+                                  <span>💡 This analysis provides general guidance. Always perform on-site RF scans for accurate interference mapping.</span>
+                                  {interferenceData.timestamp && (
+                                    <span style={{ fontSize: '10px', color: '#6b7785', marginLeft: '12px' }}>
+                                      Updated: {new Date(interferenceData.timestamp).toLocaleString('en-US', { 
+                                        month: 'short', 
+                                        day: 'numeric', 
+                                        hour: '2-digit', 
+                                        minute: '2-digit' 
+                                      })}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -2258,6 +2361,100 @@ export default function RFSiteAssessment() {
                             }}>
                               <CheckCircle size={20} style={{ color: '#22c55e', flexShrink: 0 }} />
                               <span>No major interference concerns detected for this location. Proceed with on-site RF scanning.</span>
+                            </div>
+                          )}
+                          
+                          {/* Interference History */}
+                          {showInterferenceHistory && interferenceHistory.length > 0 && (
+                            <div style={{
+                              marginTop: '16px',
+                              padding: '16px',
+                              backgroundColor: '#0d1117',
+                              borderRadius: '8px',
+                              border: '1px solid #2d3748'
+                            }}>
+                              <div style={{
+                                fontSize: '12px',
+                                color: '#6b7785',
+                                fontWeight: '600',
+                                marginBottom: '12px',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center'
+                              }}>
+                                <span>INTERFERENCE ANALYSIS HISTORY</span>
+                                <button
+                                  onClick={() => setShowInterferenceHistory(false)}
+                                  style={{
+                                    padding: '4px',
+                                    backgroundColor: 'transparent',
+                                    border: 'none',
+                                    color: '#6b7785',
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  <X size={14} />
+                                </button>
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                {interferenceHistory.map((report, idx) => (
+                                  <div
+                                    key={idx}
+                                    style={{
+                                      padding: '12px',
+                                      backgroundColor: '#1a2332',
+                                      borderRadius: '6px',
+                                      border: idx === 0 ? '1px solid #06b6d4' : '1px solid #2d3748',
+                                      cursor: 'pointer',
+                                      transition: 'border-color 0.2s'
+                                    }}
+                                    onClick={() => {
+                                      setInterferenceData(report);
+                                      setShowInterferenceHistory(false);
+                                      logger.info('Wizard', 'Restored interference report from history', { timestamp: report.timestamp });
+                                    }}
+                                  >
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: '12px' }}>
+                                      <div style={{ flex: 1 }}>
+                                        <div style={{ fontSize: '12px', color: '#e6edf3', fontWeight: '600', marginBottom: '4px' }}>
+                                          {report.venueName || 'Unknown Venue'}
+                                        </div>
+                                        <div style={{ fontSize: '11px', color: '#9ca3af', marginBottom: '6px' }}>
+                                          {report.venueAddress}
+                                        </div>
+                                        <div style={{ fontSize: '10px', color: '#6b7785', display: 'flex', gap: '12px' }}>
+                                          <span>
+                                            <Clock size={10} style={{ display: 'inline', marginRight: '4px' }} />
+                                            {new Date(report.timestamp).toLocaleString('en-US', { 
+                                              month: 'short', 
+                                              day: 'numeric', 
+                                              year: 'numeric',
+                                              hour: '2-digit', 
+                                              minute: '2-digit' 
+                                            })}
+                                          </span>
+                                          <span>
+                                            {report.risks?.length || 0} risk{report.risks?.length !== 1 ? 's' : ''}
+                                          </span>
+                                        </div>
+                                      </div>
+                                      {idx === 0 && (
+                                        <div style={{
+                                          fontSize: '9px',
+                                          padding: '3px 6px',
+                                          borderRadius: '3px',
+                                          backgroundColor: '#06b6d4',
+                                          color: '#0a0e14',
+                                          fontWeight: '700',
+                                          textTransform: 'uppercase'
+                                        }}>
+                                          Current
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           )}
                         </div>
