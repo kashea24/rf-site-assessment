@@ -810,6 +810,25 @@ export default function RFSiteAssessment() {
   const [selectedTest, setSelectedTest] = useState(null);
   const [selectedAntenna, setSelectedAntenna] = useState(null);
   const [antennaRecommendation, setAntennaRecommendation] = useState(null);
+  
+  // Wizard state
+  const [showWizard, setShowWizard] = useState(false);
+  const [wizardStep, setWizardStep] = useState(0);
+  const [wizardData, setWizardData] = useState({
+    // Basic Info
+    showName: '',
+    setupDate: new Date().toISOString().split('T')[0],
+    showStartDate: '',
+    showEndDate: '',
+    venueName: '',
+    venueType: '',
+    venueLocation: '',
+    venueAddress: '',
+    // Test procedure tracking
+    completedTests: {},
+    testNotes: {}
+  });
+  
   const [siteProfile, setSiteProfile] = useState({
     venueName: '',
     venueType: '',
@@ -839,6 +858,34 @@ export default function RFSiteAssessment() {
   // Show connection modal
   const [showConnectionModal, setShowConnectionModal] = useState(false);
   const [wsUrl, setWsUrl] = useState('ws://localhost:8765');
+
+  // Load saved wizard data from localStorage on mount
+  useEffect(() => {
+    const savedData = localStorage.getItem('rfShowProfile');
+    if (savedData) {
+      try {
+        const parsed = JSON.parse(savedData);
+        setWizardData(parsed);
+        setSiteProfile({
+          venueName: parsed.venueName,
+          venueType: parsed.venueType,
+          date: parsed.setupDate,
+          notes: ''
+        });
+        logger.info('App', 'Loaded saved show profile from localStorage', { showName: parsed.showName });
+      } catch (e) {
+        logger.error('App', 'Failed to load saved profile', { error: e.message });
+      }
+    }
+  }, []);
+
+  // Save wizard data to localStorage whenever it changes
+  useEffect(() => {
+    if (wizardData.showName) {
+      localStorage.setItem('rfShowProfile', JSON.stringify(wizardData));
+      logger.debug('App', 'Saved show profile to localStorage');
+    }
+  }, [wizardData]);
 
   // Initialize connection manager
   useEffect(() => {
@@ -1426,131 +1473,745 @@ export default function RFSiteAssessment() {
         })}
       </nav>
 
+      {/* Setup Wizard Modal */}
+      {showWizard && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'rgba(0,0,0,0.95)',
+          zIndex: 2000,
+          overflow: 'auto',
+          padding: '40px 20px'
+        }}>
+          <div style={{
+            maxWidth: '1000px',
+            margin: '0 auto',
+            backgroundColor: '#141a23',
+            borderRadius: '16px',
+            border: '2px solid #2d3748',
+            overflow: 'hidden'
+          }}>
+            {/* Wizard Header with Progress */}
+            <div style={{
+              padding: '24px',
+              borderBottom: '1px solid #2d3748',
+              backgroundColor: '#1a2332'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h2 style={{ fontSize: '24px', color: '#e6edf3', margin: 0, fontWeight: '600' }}>
+                  {wizardStep === 0 ? 'Show Setup Wizard' : `Step ${wizardStep} of ${TEST_PROCEDURES.length + 1}`}
+                </h2>
+                <button
+                  onClick={() => {
+                    if (wizardData.showName) {
+                      setShowWizard(false);
+                      logger.info('Wizard', 'Wizard closed - show profile exists');
+                    } else if (confirm('Are you sure? Your progress will not be saved.')) {
+                      setShowWizard(false);
+                      logger.warn('Wizard', 'Wizard closed without saving');
+                    }
+                  }}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#6b7785',
+                    cursor: 'pointer',
+                    padding: '8px'
+                  }}
+                >
+                  <X size={24} />
+                </button>
+              </div>
+              
+              {/* Progress Bar */}
+              <div style={{
+                height: '8px',
+                backgroundColor: '#0d1117',
+                borderRadius: '4px',
+                overflow: 'hidden'
+              }}>
+                <div style={{
+                  height: '100%',
+                  backgroundColor: '#06b6d4',
+                  width: `${(wizardStep / (TEST_PROCEDURES.length + 1)) * 100}%`,
+                  transition: 'width 0.3s'
+                }} />
+              </div>
+            </div>
+
+            {/* Wizard Content */}
+            <div style={{ padding: '40px' }}>
+              {/* Step 0: Basic Information */}
+              {wizardStep === 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+                  <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+                    <div style={{
+                      width: '100px',
+                      height: '100px',
+                      borderRadius: '50%',
+                      backgroundColor: '#1a2332',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginBottom: '16px'
+                    }}>
+                      <FileText size={40} color="#06b6d4" />
+                    </div>
+                    <h3 style={{ fontSize: '20px', color: '#e6edf3', margin: '0 0 8px 0' }}>
+                      Let's Get Started
+                    </h3>
+                    <p style={{ fontSize: '14px', color: '#6b7785', maxWidth: '600px', margin: '0 auto' }}>
+                      We'll guide you through setting up your show profile and conducting comprehensive RF site tests. This information will help us recommend the optimal antenna configuration.
+                    </p>
+                  </div>
+
+                  <div style={{ display: 'grid', gap: '24px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                      <div>
+                        <label style={{ fontSize: '12px', color: '#6b7785', fontWeight: '600', display: 'block', marginBottom: '8px' }}>
+                          SHOW NAME *
+                        </label>
+                        <input
+                          type="text"
+                          value={wizardData.showName}
+                          onChange={(e) => setWizardData(prev => ({ ...prev, showName: e.target.value }))}
+                          placeholder="e.g., Annual Corporate Gala 2026"
+                          style={{
+                            width: '100%',
+                            padding: '12px 16px',
+                            backgroundColor: '#0d1117',
+                            border: '2px solid #2d3748',
+                            borderRadius: '8px',
+                            color: '#e6edf3',
+                            fontSize: '14px'
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '12px', color: '#6b7785', fontWeight: '600', display: 'block', marginBottom: '8px' }}>
+                          SETUP DATE *
+                        </label>
+                        <input
+                          type="date"
+                          value={wizardData.setupDate}
+                          onChange={(e) => setWizardData(prev => ({ ...prev, setupDate: e.target.value }))}
+                          style={{
+                            width: '100%',
+                            padding: '12px 16px',
+                            backgroundColor: '#0d1117',
+                            border: '2px solid #2d3748',
+                            borderRadius: '8px',
+                            color: '#e6edf3',
+                            fontSize: '14px'
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                      <div>
+                        <label style={{ fontSize: '12px', color: '#6b7785', fontWeight: '600', display: 'block', marginBottom: '8px' }}>
+                          SHOW START DATE *
+                        </label>
+                        <input
+                          type="date"
+                          value={wizardData.showStartDate}
+                          onChange={(e) => setWizardData(prev => ({ ...prev, showStartDate: e.target.value }))}
+                          style={{
+                            width: '100%',
+                            padding: '12px 16px',
+                            backgroundColor: '#0d1117',
+                            border: '2px solid #2d3748',
+                            borderRadius: '8px',
+                            color: '#e6edf3',
+                            fontSize: '14px'
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '12px', color: '#6b7785', fontWeight: '600', display: 'block', marginBottom: '8px' }}>
+                          SHOW END DATE *
+                        </label>
+                        <input
+                          type="date"
+                          value={wizardData.showEndDate}
+                          onChange={(e) => setWizardData(prev => ({ ...prev, showEndDate: e.target.value }))}
+                          style={{
+                            width: '100%',
+                            padding: '12px 16px',
+                            backgroundColor: '#0d1117',
+                            border: '2px solid #2d3748',
+                            borderRadius: '8px',
+                            color: '#e6edf3',
+                            fontSize: '14px'
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: '12px', color: '#6b7785', fontWeight: '600', display: 'block', marginBottom: '8px' }}>
+                        VENUE NAME *
+                      </label>
+                      <input
+                        type="text"
+                        value={wizardData.venueName}
+                        onChange={(e) => setWizardData(prev => ({ ...prev, venueName: e.target.value }))}
+                        placeholder="e.g., Grand Ballroom at Hilton Downtown"
+                        style={{
+                          width: '100%',
+                          padding: '12px 16px',
+                          backgroundColor: '#0d1117',
+                          border: '2px solid #2d3748',
+                          borderRadius: '8px',
+                          color: '#e6edf3',
+                          fontSize: '14px'
+                        }}
+                      />
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                      <div>
+                        <label style={{ fontSize: '12px', color: '#6b7785', fontWeight: '600', display: 'block', marginBottom: '8px' }}>
+                          VENUE TYPE *
+                        </label>
+                        <select
+                          value={wizardData.venueType}
+                          onChange={(e) => setWizardData(prev => ({ ...prev, venueType: e.target.value }))}
+                          style={{
+                            width: '100%',
+                            padding: '12px 16px',
+                            backgroundColor: '#0d1117',
+                            border: '2px solid #2d3748',
+                            borderRadius: '8px',
+                            color: '#e6edf3',
+                            fontSize: '14px'
+                          }}
+                        >
+                          <option value="">Select type...</option>
+                          {SCENARIO_TEMPLATES.map(s => (
+                            <option key={s.id} value={s.id}>{s.name} - {s.venue}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '12px', color: '#6b7785', fontWeight: '600', display: 'block', marginBottom: '8px' }}>
+                          VENUE LOCATION *
+                        </label>
+                        <input
+                          type="text"
+                          value={wizardData.venueLocation}
+                          onChange={(e) => setWizardData(prev => ({ ...prev, venueLocation: e.target.value }))}
+                          placeholder="e.g., New York, NY"
+                          style={{
+                            width: '100%',
+                            padding: '12px 16px',
+                            backgroundColor: '#0d1117',
+                            border: '2px solid #2d3748',
+                            borderRadius: '8px',
+                            color: '#e6edf3',
+                            fontSize: '14px'
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: '12px', color: '#6b7785', fontWeight: '600', display: 'block', marginBottom: '8px' }}>
+                        VENUE ADDRESS (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={wizardData.venueAddress}
+                        onChange={(e) => setWizardData(prev => ({ ...prev, venueAddress: e.target.value }))}
+                        placeholder="Street address for reference"
+                        style={{
+                          width: '100%',
+                          padding: '12px 16px',
+                          backgroundColor: '#0d1117',
+                          border: '2px solid #2d3748',
+                          borderRadius: '8px',
+                          color: '#e6edf3',
+                          fontSize: '14px'
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Steps 1+: Test Procedures */}
+              {wizardStep > 0 && wizardStep <= TEST_PROCEDURES.length && (() => {
+                const test = TEST_PROCEDURES[wizardStep - 1];
+                const isCompleted = wizardData.completedTests[test.id];
+                
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+                    {/* Test Header */}
+                    <div style={{
+                      padding: '24px',
+                      backgroundColor: '#1a2332',
+                      borderRadius: '12px',
+                      border: '2px solid #2d3748'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'start', gap: '16px' }}>
+                        <div style={{
+                          minWidth: '60px',
+                          height: '60px',
+                          borderRadius: '12px',
+                          backgroundColor: isCompleted ? '#166534' : '#0c2d3d',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}>
+                          {isCompleted ? <CheckCircle size={30} color="#22c55e" /> : <Activity size={30} color="#06b6d4" />}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <h3 style={{ fontSize: '20px', color: '#e6edf3', margin: '0 0 8px 0', fontWeight: '600' }}>
+                            {test.name}
+                          </h3>
+                          <p style={{ fontSize: '14px', color: '#6b7785', margin: 0 }}>
+                            {test.description}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Equipment Images */}
+                    <div style={{
+                      padding: '24px',
+                      backgroundColor: '#0d1117',
+                      borderRadius: '12px',
+                      border: '1px solid #2d3748'
+                    }}>
+                      <h4 style={{ fontSize: '14px', color: '#06b6d4', margin: '0 0 16px 0', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        📡 Required Equipment
+                      </h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                        <div style={{
+                          padding: '16px',
+                          backgroundColor: '#141a23',
+                          borderRadius: '8px',
+                          textAlign: 'center'
+                        }}>
+                          <div style={{
+                            width: '100%',
+                            height: '120px',
+                            backgroundColor: '#1a2332',
+                            borderRadius: '8px',
+                            marginBottom: '12px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: '#06b6d4',
+                            fontSize: '48px'
+                          }}>
+                            📻
+                          </div>
+                          <div style={{ fontSize: '14px', color: '#e6edf3', fontWeight: '600', marginBottom: '4px' }}>
+                            RF Explorer 6G WB Plus
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#6b7785' }}>
+                            Spectrum Analyzer
+                          </div>
+                        </div>
+                        <div style={{
+                          padding: '16px',
+                          backgroundColor: '#141a23',
+                          borderRadius: '8px',
+                          textAlign: 'center'
+                        }}>
+                          <div style={{
+                            width: '100%',
+                            height: '120px',
+                            backgroundColor: '#1a2332',
+                            borderRadius: '8px',
+                            marginBottom: '12px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: '#06b6d4',
+                            fontSize: '48px'
+                          }}>
+                            📹
+                          </div>
+                          <div style={{ fontSize: '14px', color: '#e6edf3', fontWeight: '600', marginBottom: '4px' }}>
+                            ABOnAir 612
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#6b7785' }}>
+                            Wireless Video System
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Test Steps */}
+                    <div>
+                      <h4 style={{ fontSize: '14px', color: '#f59e0b', margin: '0 0 16px 0', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        📋 Step-by-Step Instructions
+                      </h4>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        {test.steps.map((step, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              padding: '16px',
+                              backgroundColor: '#0d1117',
+                              borderRadius: '8px',
+                              border: '1px solid #2d3748',
+                              display: 'flex',
+                              gap: '16px'
+                            }}
+                          >
+                            <div style={{
+                              minWidth: '32px',
+                              height: '32px',
+                              borderRadius: '50%',
+                              backgroundColor: '#1a2332',
+                              color: '#06b6d4',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: '14px',
+                              fontWeight: '600'
+                            }}>
+                              {i + 1}
+                            </div>
+                            <div style={{ flex: 1, paddingTop: '4px' }}>
+                              <p style={{ fontSize: '14px', color: '#e6edf3', margin: 0, lineHeight: '1.6' }}>
+                                {step}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Test Results Input */}
+                    <div style={{
+                      padding: '24px',
+                      backgroundColor: '#1a2332',
+                      borderRadius: '12px',
+                      border: '2px solid #2d3748'
+                    }}>
+                      <h4 style={{ fontSize: '14px', color: '#22c55e', margin: '0 0 16px 0', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        ✅ Technician Feedback
+                      </h4>
+                      <textarea
+                        value={wizardData.testNotes[test.id] || ''}
+                        onChange={(e) => setWizardData(prev => ({
+                          ...prev,
+                          testNotes: { ...prev.testNotes, [test.id]: e.target.value }
+                        }))}
+                        placeholder="Enter your observations, measurements, or any issues encountered..."
+                        style={{
+                          width: '100%',
+                          minHeight: '120px',
+                          padding: '16px',
+                          backgroundColor: '#0d1117',
+                          border: '2px solid #2d3748',
+                          borderRadius: '8px',
+                          color: '#e6edf3',
+                          fontSize: '14px',
+                          fontFamily: 'inherit',
+                          resize: 'vertical'
+                        }}
+                      />
+                      <div style={{ marginTop: '16px', display: 'flex', gap: '12px', alignItems: 'center' }}>
+                        <label style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          cursor: 'pointer',
+                          fontSize: '14px',
+                          color: '#e6edf3'
+                        }}>
+                          <input
+                            type="checkbox"
+                            checked={!!isCompleted}
+                            onChange={(e) => {
+                              setWizardData(prev => ({
+                                ...prev,
+                                completedTests: {
+                                  ...prev.completedTests,
+                                  [test.id]: e.target.checked
+                                }
+                              }));
+                              if (e.target.checked) {
+                                logger.info('Wizard', `Test completed: ${test.name}`);
+                              }
+                            }}
+                            style={{ width: '18px', height: '18px' }}
+                          />
+                          Mark this test as completed
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Wizard Footer with Navigation */}
+            <div style={{
+              padding: '24px',
+              borderTop: '1px solid #2d3748',
+              backgroundColor: '#1a2332',
+              display: 'flex',
+              justifyContent: 'space-between',
+              gap: '16px'
+            }}>
+              <button
+                onClick={() => {
+                  setWizardStep(Math.max(0, wizardStep - 1));
+                  logger.debug('Wizard', `Step back to ${wizardStep - 1}`);
+                }}
+                disabled={wizardStep === 0}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: wizardStep === 0 ? '#1e2730' : '#2d3748',
+                  border: 'none',
+                  borderRadius: '8px',
+                  color: wizardStep === 0 ? '#4a5568' : '#e6edf3',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: wizardStep === 0 ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}
+              >
+                <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} />
+                Previous
+              </button>
+
+              <div style={{ display: 'flex', gap: '12px' }}>
+                {wizardStep === TEST_PROCEDURES.length && (
+                  <button
+                    onClick={() => {
+                      setSiteProfile({
+                        venueName: wizardData.venueName,
+                        venueType: wizardData.venueType,
+                        date: wizardData.setupDate,
+                        notes: ''
+                      });
+                      setShowWizard(false);
+                      logger.info('Wizard', 'Setup wizard completed', { showName: wizardData.showName });
+                    }}
+                    style={{
+                      padding: '12px 32px',
+                      backgroundColor: '#22c55e',
+                      border: 'none',
+                      borderRadius: '8px',
+                      color: '#0a0e14',
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}
+                  >
+                    <CheckCircle size={16} />
+                    Complete Setup
+                  </button>
+                )}
+                
+                {wizardStep < TEST_PROCEDURES.length && (
+                  <button
+                    onClick={() => {
+                      if (wizardStep === 0) {
+                        // Validate basic info
+                        if (!wizardData.showName || !wizardData.venueName || !wizardData.showStartDate || !wizardData.showEndDate || !wizardData.venueType || !wizardData.venueLocation) {
+                          alert('Please fill in all required fields before continuing.');
+                          return;
+                        }
+                        logger.info('Wizard', 'Basic info completed, starting tests', wizardData);
+                      }
+                      setWizardStep(wizardStep + 1);
+                      logger.debug('Wizard', `Advanced to step ${wizardStep + 1}`);
+                    }}
+                    style={{
+                      padding: '12px 32px',
+                      backgroundColor: '#06b6d4',
+                      border: 'none',
+                      borderRadius: '8px',
+                      color: '#0a0e14',
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}
+                  >
+                    Next
+                    <ChevronRight size={16} />
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main Content */}
       <main style={{ padding: '24px', maxWidth: '1600px', margin: '0 auto' }}>
         
         {/* Dashboard Tab */}
         {activeTab === 'dashboard' && (
           <div style={{ display: 'grid', gap: '24px' }}>
-            {/* Site Profile Card */}
-            <div style={{
-              backgroundColor: '#141a23',
-              borderRadius: '12px',
-              border: '1px solid #1e2730',
-              padding: '24px'
-            }}>
-              <h2 style={{ 
-                fontSize: '14px', 
-                color: '#6b7785', 
-                textTransform: 'uppercase', 
-                letterSpacing: '0.1em',
-                marginBottom: '20px',
+            {/* Empty State - No Show Configured */}
+            {!wizardData.showName && (
+              <div style={{
+                backgroundColor: '#141a23',
+                borderRadius: '16px',
+                border: '2px dashed #2d3748',
+                padding: '80px 40px',
+                textAlign: 'center',
                 display: 'flex',
+                flexDirection: 'column',
                 alignItems: 'center',
-                gap: '8px'
+                gap: '24px'
               }}>
-                <MapPin size={16} />
-                Site Profile
-              </h2>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
-                <div>
-                  <label style={{ fontSize: '11px', color: '#6b7785', display: 'block', marginBottom: '6px' }}>
-                    VENUE NAME
-                  </label>
-                  <input
-                    type="text"
-                    value={siteProfile.venueName}
-                    onChange={(e) => setSiteProfile(prev => ({ ...prev, venueName: e.target.value }))}
-                    placeholder="Enter venue name"
-                    style={{
-                      width: '100%',
-                      padding: '10px 12px',
-                      backgroundColor: '#0d1117',
-                      border: '1px solid #2d3748',
-                      borderRadius: '6px',
-                      color: '#e6edf3',
-                      fontSize: '14px'
-                    }}
-                  />
+                <div style={{
+                  width: '120px',
+                  height: '120px',
+                  borderRadius: '50%',
+                  backgroundColor: '#1a2332',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: '8px'
+                }}>
+                  <FileText size={48} color="#06b6d4" />
                 </div>
                 <div>
-                  <label style={{ fontSize: '11px', color: '#6b7785', display: 'block', marginBottom: '6px' }}>
-                    VENUE TYPE
-                  </label>
-                  <select
-                    value={siteProfile.venueType}
-                    onChange={(e) => setSiteProfile(prev => ({ ...prev, venueType: e.target.value }))}
-                    style={{
-                      width: '100%',
-                      padding: '10px 12px',
-                      backgroundColor: '#0d1117',
-                      border: '1px solid #2d3748',
-                      borderRadius: '6px',
-                      color: '#e6edf3',
-                      fontSize: '14px'
-                    }}
-                  >
-                    <option value="">Select type...</option>
-                    {SCENARIO_TEMPLATES.map(s => (
-                      <option key={s.id} value={s.id}>{s.name} - {s.venue}</option>
-                    ))}
-                  </select>
+                  <h2 style={{ fontSize: '28px', color: '#e6edf3', margin: '0 0 12px 0', fontWeight: '600' }}>
+                    No Show Profile Found
+                  </h2>
+                  <p style={{ fontSize: '16px', color: '#6b7785', margin: '0 0 32px 0', maxWidth: '500px' }}>
+                    Get started by creating a new show profile. We'll guide you through site assessment, equipment setup, and RF testing step-by-step.
+                  </p>
                 </div>
-                <div>
-                  <label style={{ fontSize: '11px', color: '#6b7785', display: 'block', marginBottom: '6px' }}>
-                    EVENT DATE
-                  </label>
-                  <input
-                    type="date"
-                    value={siteProfile.date}
-                    onChange={(e) => setSiteProfile(prev => ({ ...prev, date: e.target.value }))}
-                    style={{
-                      width: '100%',
-                      padding: '10px 12px',
-                      backgroundColor: '#0d1117',
-                      border: '1px solid #2d3748',
-                      borderRadius: '6px',
-                      color: '#e6edf3',
-                      fontSize: '14px'
-                    }}
-                  />
+                <button
+                  onClick={() => {
+                    setShowWizard(true);
+                    setWizardStep(0);
+                    logger.info('App', 'Starting new show setup wizard');
+                  }}
+                  style={{
+                    padding: '16px 48px',
+                    backgroundColor: '#06b6d4',
+                    border: 'none',
+                    borderRadius: '8px',
+                    color: '#0a0e14',
+                    fontSize: '16px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    boxShadow: '0 4px 12px rgba(6, 182, 212, 0.3)'
+                  }}
+                >
+                  <Plus size={20} />
+                  Start New Show Setup
+                </button>
+                <div style={{ marginTop: '24px', fontSize: '13px', color: '#6b7785' }}>
+                  <div style={{ marginBottom: '8px' }}>📋 Step-by-step guided setup</div>
+                  <div style={{ marginBottom: '8px' }}>📊 Interactive site testing procedures</div>
+                  <div>📡 Intelligent antenna recommendations</div>
                 </div>
               </div>
-            </div>
+            )}
 
-            {/* Quick Status Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-              {/* ABOnAir Band Status */}
-              {ABONAIR_BANDS.map(band => {
-                // Filter spectrum data for this band
-                const bandData = spectrumData.filter(p => p.frequency >= band.start && p.frequency <= band.end);
-                const maxSignal = bandData.length > 0 ? Math.max(...bandData.map(p => p.amplitude)) : -100;
-                const quality = getSignalQuality(maxSignal);
-                
-                return (
-                  <div key={band.id} style={{
-                    backgroundColor: '#141a23',
-                    borderRadius: '12px',
-                    border: '1px solid #1e2730',
-                    padding: '20px'
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '16px' }}>
-                      <div>
-                        <h3 style={{ fontSize: '16px', color: '#e6edf3', margin: 0 }}>{band.name}</h3>
-                        <p style={{ fontSize: '12px', color: '#6b7785', margin: '4px 0 0 0' }}>{band.range}</p>
+            {/* Show Profile Summary - When show exists */}
+            {wizardData.showName && (
+              <>
+                {/* Show Header Card */}
+                <div style={{
+                  backgroundColor: '#141a23',
+                  borderRadius: '12px',
+                  border: '1px solid #1e2730',
+                  padding: '24px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+                }}>
+                  <div>
+                    <h1 style={{ fontSize: '24px', color: '#e6edf3', margin: '0 0 8px 0' }}>
+                      {wizardData.showName}
+                    </h1>
+                    <div style={{ display: 'flex', gap: '24px', fontSize: '14px', color: '#6b7785' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <MapPin size={14} />
+                        {wizardData.venueName} - {wizardData.venueLocation}
                       </div>
-                      <div style={{
-                        padding: '4px 8px',
-                        backgroundColor: `${quality.color}20`,
-                        borderRadius: '4px',
-                        fontSize: '10px',
-                        fontWeight: '600',
-                        color: quality.color
-                      }}>
-                        {quality.label}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Clock size={14} />
+                        {new Date(wizardData.showStartDate).toLocaleDateString()} - {new Date(wizardData.showEndDate).toLocaleDateString()}
                       </div>
                     </div>
-                    <div style={{ 
+                  </div>
+                  <button
+                    onClick={() => {
+                      setShowWizard(true);
+                      setWizardStep(0);
+                      logger.info('App', 'Reopening setup wizard to edit show profile');
+                    }}
+                    style={{
+                      padding: '10px 20px',
+                      backgroundColor: '#1e2730',
+                      border: '1px solid #2d3748',
+                      borderRadius: '6px',
+                      color: '#06b6d4',
+                      fontSize: '14px',
+                      fontWeight: '500',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}
+                  >
+                    <Settings size={16} />
+                    Review Setup
+                  </button>
+                </div>
+
+                {/* Quick Status Grid */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
+                  {/* ABOnAir Band Status */}
+                  {ABONAIR_BANDS.map(band => {
+                    // Filter spectrum data for this band
+                    const bandData = spectrumData.filter(p => p.frequency >= band.start && p.frequency <= band.end);
+                    const maxSignal = bandData.length > 0 ? Math.max(...bandData.map(p => p.amplitude)) : -100;
+                    const quality = getSignalQuality(maxSignal);
+                    
+                    return (
+                      <div key={band.id} style={{
+                        backgroundColor: '#141a23',
+                        borderRadius: '12px',
+                        border: '1px solid #1e2730',
+                        padding: '20px'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '16px' }}>
+                          <div>
+                            <h3 style={{ fontSize: '16px', color: '#e6edf3', margin: 0 }}>{band.name}</h3>
+                            <p style={{ fontSize: '12px', color: '#6b7785', margin: '4px 0 0 0' }}>{band.range}</p>
+                          </div>
+                          <div style={{
+                            padding: '4px 8px',
+                            backgroundColor: `${quality.color}20`,
+                            borderRadius: '4px',
+                            fontSize: '10px',
+                            fontWeight: '600',
+                            color: quality.color
+                          }}>
+                            {quality.label}
+                          </div>
+                        </div>
+                        <div style={{ 
                       height: '50px', 
                       backgroundColor: '#0d1117', 
                       borderRadius: '6px',
