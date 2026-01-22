@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Radio, Antenna, Activity, FileText, Settings, AlertTriangle, CheckCircle, Clock, MapPin, Wifi, Zap, BarChart3, List, BookOpen, ChevronRight, Play, Pause, Download, Plus, Trash2, Eye, Signal, Usb, RefreshCw, X, Sliders } from 'lucide-react';
+import { Radio, Antenna, Activity, FileText, Settings, AlertTriangle, CheckCircle, Clock, MapPin, Wifi, Zap, BarChart3, List, BookOpen, ChevronRight, Play, Pause, Download, Plus, Trash2, Eye, Signal, Usb, RefreshCw, X, Sliders, Ruler, Navigation, Target } from 'lucide-react';
+import { logger } from './logger.js';
 
 // ============================================================================
 // RF EXPLORER CONNECTION MANAGER
@@ -702,6 +703,96 @@ const SCENARIO_TEMPLATES = [
 ];
 
 // ============================================================================
+// INTELLIGENT ANTENNA RECOMMENDATION ENGINE
+// ============================================================================
+
+function determineOptimalAntennaConfig(testResults, siteProfile, eventLog) {
+  logger.info('AntennaEngine', 'Determining optimal antenna configuration', { testResults: testResults.length, siteProfile });
+  
+  const factors = {
+    venueSize: 0,
+    interference: 0,
+    multipath: 0,
+    distance: 0,
+    complexity: 0
+  };
+  
+  // Analyze test results
+  testResults.forEach(result => {
+    if (result.testId === 'venue-walk') {
+      if (result.result?.weakSpots > 5) {
+        factors.multipath += 2;
+        factors.complexity += 1;
+      }
+      if (result.result?.maxDistance > 200) {
+        factors.distance += 2;
+        factors.venueSize += 1;
+      }
+    }
+    
+    if (result.testId === 'interference-scan') {
+      const interferenceCount = result.result?.interferenceCount || 0;
+      if (interferenceCount > 10) {
+        factors.interference += 2;
+      } else if (interferenceCount > 5) {
+        factors.interference += 1;
+      }
+    }
+    
+    if (result.testId === 'los-test') {
+      if (!result.result?.hasLOS) {
+        factors.multipath += 2;
+        factors.complexity += 1;
+      }
+    }
+  });
+  
+  // Analyze event log for interference
+  const criticalEvents = eventLog.filter(e => e.type === 'critical').length;
+  if (criticalEvents > 10) {
+    factors.interference += 2;
+  }
+  
+  // Analyze site profile
+  const venueType = siteProfile.venueType?.toLowerCase() || '';
+  if (venueType.includes('stadium') || venueType.includes('arena') || venueType.includes('convention')) {
+    factors.venueSize += 2;
+    factors.distance += 2;
+  }
+  
+  // Determine recommendation
+  let recommendedConfig = 'standard-omni';
+  let confidence = 'medium';
+  let reasoning = [];
+  
+  if (factors.distance >= 3 || factors.venueSize >= 3) {
+    recommendedConfig = 'directional-panel';
+    reasoning.push('Large venue size requires directional antennas for extended range');
+    confidence = 'high';
+  } else if (factors.interference >= 3) {
+    recommendedConfig = 'mimo-config';
+    reasoning.push('High interference environment benefits from MIMO spatial diversity');
+    confidence = 'high';
+  } else if (factors.multipath >= 3 || factors.complexity >= 2) {
+    recommendedConfig = 'hybrid-diversity';
+    reasoning.push('Complex venue layout requires hybrid diversity system');
+    confidence = 'medium';
+  } else {
+    reasoning.push('Standard omnidirectional setup sufficient for this venue');
+    confidence = 'medium';
+  }
+  
+  logger.info('AntennaEngine', `Recommended: ${recommendedConfig}`, { confidence, factors, reasoning });
+  
+  return {
+    configId: recommendedConfig,
+    confidence,
+    reasoning,
+    factors
+  };
+}
+
+// ============================================================================
 // MAIN APPLICATION COMPONENT
 // ============================================================================
 
@@ -718,6 +809,7 @@ export default function RFSiteAssessment() {
   const [eventLog, setEventLog] = useState([]);
   const [selectedTest, setSelectedTest] = useState(null);
   const [selectedAntenna, setSelectedAntenna] = useState(null);
+  const [antennaRecommendation, setAntennaRecommendation] = useState(null);
   const [siteProfile, setSiteProfile] = useState({
     venueName: '',
     venueType: '',
@@ -853,6 +945,7 @@ export default function RFSiteAssessment() {
   // Connect to RF Explorer
   const connectDevice = async (method = 'serial') => {
     try {
+      logger.info('Connection', `Attempting to connect via ${method}`, { method });
       setConnectionError(null);
       if (method === 'serial') {
         await rfConnectionRef.current.connectSerial();
@@ -860,19 +953,24 @@ export default function RFSiteAssessment() {
         await rfConnectionRef.current.connectWebSocket(wsUrl);
       }
       setIsMonitoring(true);
+      logger.info('Connection', `Successfully connected via ${method}`, { method });
     } catch (error) {
+      logger.error('Connection', 'Failed to connect', { method, error: error.message });
       setConnectionError(error.message);
     }
   };
 
   // Disconnect
   const disconnectDevice = async () => {
+    logger.info('Connection', 'Disconnecting device');
     setIsMonitoring(false);
     await rfConnectionRef.current.disconnect();
+    logger.info('Connection', 'Device disconnected');
   };
 
   // Set frequency band
   const setFrequencyBand = async (band) => {
+    logger.debug('Monitor', `Setting frequency band: ${band}`);
     let start, end;
     switch (band) {
       case 'band1':
@@ -897,6 +995,7 @@ export default function RFSiteAssessment() {
     // Reset hold data
     setMaxHoldData([]);
     setAvgData([]);
+    logger.info('Monitor', `Frequency band set to ${band}`, { start, end });
   };
 
   // Clear max hold
@@ -956,8 +1055,18 @@ export default function RFSiteAssessment() {
     }
   }, [isMonitoring, connectionStatus.connected, monitorSettings.startFreqMHz, monitorSettings.endFreqMHz, handleSweepData]);
 
+  // Calculate antenna recommendation when tests complete
+  useEffect(() => {
+    if (testResults.length >= 2) {
+      logger.info('App', 'Calculating antenna recommendation', { testCount: testResults.length });
+      const recommendation = determineOptimalAntennaConfig(testResults, siteProfile, eventLog);
+      setAntennaRecommendation(recommendation);
+    }
+  }, [testResults, siteProfile, eventLog]);
+
   const addTestResult = (testId, result) => {
     const test = TEST_PROCEDURES.find(t => t.id === testId);
+    logger.info('Tests', `Test completed: ${test?.name || testId}`, { testId, passed: result.passed });
     setTestResults(prev => [...prev, {
       id: Date.now(),
       testId,
@@ -969,6 +1078,10 @@ export default function RFSiteAssessment() {
   };
 
   const exportReport = () => {
+    logger.info('Reports', 'Exporting assessment report', { 
+      testCount: testResults.length, 
+      eventCount: eventLog.length 
+    });
     const report = {
       siteProfile,
       testResults,
@@ -1858,6 +1971,66 @@ export default function RFSiteAssessment() {
         {/* Antenna Guide Tab */}
         {activeTab === 'antennas' && (
           <div style={{ display: 'grid', gap: '24px' }}>
+            {/* AI Recommendation Banner */}
+            {antennaRecommendation && (
+              <div style={{
+                backgroundColor: '#0c2d3d',
+                borderRadius: '12px',
+                border: '2px solid #06b6d4',
+                padding: '20px',
+                display: 'grid',
+                gap: '12px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <Target size={24} color="#06b6d4" />
+                    <div>
+                      <h3 style={{ fontSize: '16px', color: '#06b6d4', margin: 0, fontWeight: '600' }}>
+                        Recommended Configuration
+                      </h3>
+                      <p style={{ fontSize: '12px', color: '#6b7785', margin: '2px 0 0 0' }}>
+                        Based on your site tests • Confidence: <span style={{ color: antennaRecommendation.confidence === 'high' ? '#22c55e' : '#f59e0b' }}>{antennaRecommendation.confidence.toUpperCase()}</span>
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const config = ANTENNA_CONFIGS.find(c => c.id === antennaRecommendation.configId);
+                      setSelectedAntenna(config);
+                      logger.info('App', 'Selected recommended antenna config', { configId: config?.id });
+                    }}
+                    style={{
+                      padding: '10px 20px',
+                      backgroundColor: '#06b6d4',
+                      border: 'none',
+                      borderRadius: '6px',
+                      color: '#0a0e14',
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    View Details
+                  </button>
+                </div>
+                <div style={{
+                  padding: '12px',
+                  backgroundColor: '#0a1929',
+                  borderRadius: '6px',
+                  borderLeft: '3px solid #06b6d4'
+                }}>
+                  <div style={{ fontSize: '14px', color: '#e6edf3', fontWeight: '500', marginBottom: '8px' }}>
+                    {ANTENNA_CONFIGS.find(c => c.id === antennaRecommendation.configId)?.name}
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#c5cdd9' }}>
+                    {antennaRecommendation.reasoning.map((reason, i) => (
+                      <div key={i} style={{ marginBottom: '4px' }}>• {reason}</div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+            
             <div style={{ display: 'grid', gridTemplateColumns: selectedAntenna ? '1fr 1.5fr' : '1fr', gap: '24px' }}>
               {/* Antenna Config List */}
               <div style={{
@@ -1985,6 +2158,152 @@ export default function RFSiteAssessment() {
                             {item}
                           </div>
                         ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Visual Diagram */}
+                  <div style={{ marginBottom: '24px' }}>
+                    <h3 style={{ fontSize: '12px', color: '#6b7785', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Navigation size={14} />
+                      Configuration Diagram
+                    </h3>
+                    <div style={{
+                      padding: '24px',
+                      backgroundColor: '#0a0e14',
+                      borderRadius: '8px',
+                      border: '2px dashed #1e2730',
+                      minHeight: '200px',
+                      position: 'relative'
+                    }}>
+                      {/* Antenna Diagram - varies by config type */}
+                      <svg width="100%" height="200" viewBox="0 0 600 200" style={{ overflow: 'visible' }}>
+                        {selectedAntenna.id === 'standard-omni' && (
+                          <g>
+                            {/* TX on left */}
+                            <circle cx="100" cy="100" r="30" fill="#06b6d4" opacity="0.2" />
+                            <circle cx="100" cy="100" r="15" fill="#06b6d4" />
+                            <text x="100" y="105" textAnchor="middle" fill="#e6edf3" fontSize="10" fontWeight="bold">TX</text>
+                            <line x1="100" y1="85" x2="100" y2="50" stroke="#06b6d4" strokeWidth="3" />
+                            
+                            {/* Signal waves */}
+                            <circle cx="100" cy="100" r="50" fill="none" stroke="#06b6d4" strokeWidth="1" opacity="0.3" />
+                            <circle cx="100" cy="100" r="70" fill="none" stroke="#06b6d4" strokeWidth="1" opacity="0.2" />
+                            
+                            {/* RX antennas on right with diversity spacing */}
+                            <circle cx="450" cy="70" r="30" fill="#22c55e" opacity="0.2" />
+                            <circle cx="450" cy="70" r="15" fill="#22c55e" />
+                            <text x="450" y="75" textAnchor="middle" fill="#0a0e14" fontSize="10" fontWeight="bold">RX1</text>
+                            <line x1="450" y1="55" x2="450" y2="20" stroke="#22c55e" strokeWidth="3" />
+                            
+                            <circle cx="450" cy="130" r="30" fill="#22c55e" opacity="0.2" />
+                            <circle cx="450" cy="130" r="15" fill="#22c55e" />
+                            <text x="450" y="135" textAnchor="middle" fill="#0a0e14" fontSize="10" fontWeight="bold">RX2</text>
+                            <line x1="450" y1="145" x2="450" y2="180" stroke="#22c55e" strokeWidth="3" />
+                            
+                            {/* Measurements */}
+                            <line x1="120" y1="100" x2="420" y2="100" stroke="#f59e0b" strokeWidth="1" strokeDasharray="4" />
+                            <text x="270" y="95" textAnchor="middle" fill="#f59e0b" fontSize="12" fontWeight="bold">
+                              <tspan>100-200 ft</tspan>
+                            </text>
+                            
+                            <line x1="450" y1="85" x2="450" y2="115" stroke="#06b6d4" strokeWidth="1" strokeDasharray="4" />
+                            <text x="475" y="102" fill="#06b6d4" fontSize="10">6+ ft</text>
+                          </g>
+                        )}
+                        
+                        {selectedAntenna.id === 'directional-panel' && (
+                          <g>
+                            {/* TX */}
+                            <circle cx="100" cy="100" r="15" fill="#06b6d4" />
+                            <text x="100" y="105" textAnchor="middle" fill="#e6edf3" fontSize="10" fontWeight="bold">TX</text>
+                            
+                            {/* Panel antennas with directional pattern */}
+                            <rect x="420" y="40" width="40" height="60" fill="#22c55e" rx="4" />
+                            <path d="M 460 70 L 520 45 L 520 95 Z" fill="#22c55e" opacity="0.3" />
+                            <text x="440" y="75" textAnchor="middle" fill="#0a0e14" fontSize="10" fontWeight="bold">RX1</text>
+                            
+                            <rect x="420" y="110" width="40" height="60" fill="#22c55e" rx="4" />
+                            <path d="M 460 140 L 520 115 L 520 165 Z" fill="#22c55e" opacity="0.3" />
+                            <text x="440" y="145" textAnchor="middle" fill="#0a0e14" fontSize="10" fontWeight="bold">RX2</text>
+                            
+                            {/* Range indicator */}
+                            <line x1="120" y1="100" x2="420" y2="100" stroke="#f59e0b" strokeWidth="1" strokeDasharray="4" />
+                            <text x="270" y="95" textAnchor="middle" fill="#f59e0b" fontSize="12" fontWeight="bold">300-500 ft</text>
+                            
+                            {/* Coverage angle */}
+                            <path d="M 460 70 Q 490 100 460 140" fill="none" stroke="#06b6d4" strokeWidth="1" strokeDasharray="2" />
+                            <text x="500" y="105" fill="#06b6d4" fontSize="10">60-90°</text>
+                          </g>
+                        )}
+                        
+                        {(selectedAntenna.id === 'hybrid-diversity' || selectedAntenna.id === 'mimo-config') && (
+                          <g>
+                            {/* Complex array visualization */}
+                            <circle cx="100" cy="100" r="15" fill="#06b6d4" />
+                            <text x="100" y="105" textAnchor="middle" fill="#e6edf3" fontSize="10" fontWeight="bold">TX</text>
+                            
+                            {/* Multiple RX elements */}
+                            <circle cx="420" cy="50" r="12" fill="#22c55e" />
+                            <text x="420" y="54" textAnchor="middle" fill="#0a0e14" fontSize="8" fontWeight="bold">R1</text>
+                            
+                            <rect x="440" y="75" width="30" height="50" fill="#22c55e" opacity="0.8" rx="3" />
+                            <text x="455" y="103" textAnchor="middle" fill="#0a0e14" fontSize="8" fontWeight="bold">R2</text>
+                            
+                            <circle cx="480" cy="140" r="12" fill="#22c55e" />
+                            <text x="480" y="144" textAnchor="middle" fill="#0a0e14" fontSize="8" fontWeight="bold">R3</text>
+                            
+                            <circle cx="420" cy="150" r="12" fill="#22c55e" />
+                            <text x="420" y="154" textAnchor="middle" fill="#0a0e14" fontSize="8" fontWeight="bold">R4</text>
+                            
+                            {/* Spatial diversity pattern */}
+                            <path d="M 100 100 L 420 50" stroke="#06b6d4" strokeWidth="1" opacity="0.2" strokeDasharray="2" />
+                            <path d="M 100 100 L 455 100" stroke="#06b6d4" strokeWidth="1" opacity="0.2" strokeDasharray="2" />
+                            <path d="M 100 100 L 480 140" stroke="#06b6d4" strokeWidth="1" opacity="0.2" strokeDasharray="2" />
+                            <path d="M 100 100 L 420 150" stroke="#06b6d4" strokeWidth="1" opacity="0.2" strokeDasharray="2" />
+                            
+                            <text x="270" y="95" textAnchor="middle" fill="#f59e0b" fontSize="12" fontWeight="bold">
+                              {selectedAntenna.range}
+                            </text>
+                          </g>
+                        )}
+                        
+                        {/* Legend */}
+                        <g transform="translate(20, 160)">
+                          <circle cx="5" cy="5" r="5" fill="#06b6d4" />
+                          <text x="15" y="9" fill="#6b7785" fontSize="10">Transmitter</text>
+                          
+                          <circle cx="90" cy="5" r="5" fill="#22c55e" />
+                          <text x="100" y="9" fill="#6b7785" fontSize="10">Receiver</text>
+                          
+                          <line x1="180" y1="5" x2="200" y2="5" stroke="#f59e0b" strokeWidth="1" strokeDasharray="4" />
+                          <text x="205" y="9" fill="#6b7785" fontSize="10">Range</text>
+                        </g>
+                      </svg>
+                      
+                      {/* Key Measurements Callouts */}
+                      <div style={{ marginTop: '16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
+                        <div style={{ padding: '8px 12px', backgroundColor: '#141a23', borderRadius: '6px', borderLeft: '3px solid #06b6d4' }}>
+                          <div style={{ fontSize: '10px', color: '#6b7785', marginBottom: '2px' }}>
+                            <Ruler size={10} style={{ display: 'inline', marginRight: '4px' }} />
+                            TYPICAL RANGE
+                          </div>
+                          <div style={{ fontSize: '14px', color: '#06b6d4', fontWeight: '600' }}>{selectedAntenna.range}</div>
+                        </div>
+                        <div style={{ padding: '8px 12px', backgroundColor: '#141a23', borderRadius: '6px', borderLeft: '3px solid #22c55e' }}>
+                          <div style={{ fontSize: '10px', color: '#6b7785', marginBottom: '2px' }}>
+                            <Antenna size={10} style={{ display: 'inline', marginRight: '4px' }} />
+                            MIN DIVERSITY
+                          </div>
+                          <div style={{ fontSize: '14px', color: '#22c55e', fontWeight: '600' }}>6 ft spacing</div>
+                        </div>
+                        <div style={{ padding: '8px 12px', backgroundColor: '#141a23', borderRadius: '6px', borderLeft: '3px solid #f59e0b' }}>
+                          <div style={{ fontSize: '10px', color: '#6b7785', marginBottom: '2px' }}>
+                            <Navigation size={10} style={{ display: 'inline', marginRight: '4px' }} />
+                            HEIGHT
+                          </div>
+                          <div style={{ fontSize: '14px', color: '#f59e0b', fontWeight: '600' }}>8-12 ft min</div>
+                        </div>
                       </div>
                     </div>
                   </div>
