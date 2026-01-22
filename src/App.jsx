@@ -606,23 +606,39 @@ const TEST_PROCEDURES = [
     name: 'Initial Site RF Scan',
     duration: '10-15 min',
     description: 'Comprehensive frequency sweep to identify existing RF activity',
-    steps: [
-      'Power on RF Explorer 6G WB Plus and allow 2-minute warm-up',
-      'Connect RF Explorer to computer via USB',
-      'Click "Connect Device" and select the RF Explorer port',
-      'Set frequency range to 1.9 GHz - 6.1 GHz (covers both ABOnAir bands)',
-      'Enable "Max Hold" mode in the monitor settings',
-      'Walk the entire venue perimeter while monitoring',
-      'Note any signals above -60 dBm threshold (marked in orange/red)',
-      'Document WiFi access point locations',
-      'Identify potential interference sources (LED walls, DMX, intercom systems)',
-      'Record baseline noise floor readings using the peak markers'
+    equipment: [
+      { name: 'RF Explorer 6G WB Plus', role: 'Spectrum Analyzer', icon: 'Radio' },
+      { name: 'Laptop/Tablet', role: 'Data Collection', icon: 'Activity' }
+    ],
+    sections: [
+      {
+        title: 'Equipment Setup',
+        icon: 'Settings',
+        steps: [
+          { text: 'Power on RF Explorer 6G WB Plus', duration: '2 min', detail: 'Allow full warm-up for accurate readings' },
+          { text: 'Connect RF Explorer to computer via USB', duration: '30 sec', detail: 'Use high-quality USB cable for stable connection' },
+          { text: 'Click "Connect Device" and select RF Explorer port', duration: '30 sec', detail: 'Should appear as USB Serial device' },
+          { text: 'Set frequency range to 1.9-6.1 GHz', duration: '1 min', detail: 'Covers both ABOnAir bands completely' },
+          { text: 'Enable "Max Hold" mode in monitor settings', duration: '30 sec', detail: 'Captures peak signals during walkthrough' }
+        ]
+      },
+      {
+        title: 'Venue Survey (Steps 6-10)',
+        icon: 'MapPin',
+        steps: [
+          { text: 'Walk entire venue perimeter while monitoring', duration: '5-8 min', detail: 'Maintain steady pace, RF Explorer at shoulder height' },
+          { text: 'Note signals above -60 dBm threshold', duration: 'Continuous', detail: 'Orange/red markers indicate interference' },
+          { text: 'Document WiFi AP locations', duration: 'As found', detail: 'Mark on floor plan or note GPS coordinates' },
+          { text: 'Identify interference sources', duration: 'As found', detail: 'LED walls, DMX, intercom systems, lighting dimmers' },
+          { text: 'Record baseline noise floor with peak markers', duration: '2 min', detail: 'Cleanest frequency window in each band' }
+        ]
+      }
     ],
     analysis: [
-      'Noise floor below -80 dBm: Excellent conditions',
-      'Noise floor -80 to -70 dBm: Good conditions, proceed with caution',
-      'Noise floor -70 to -60 dBm: Marginal, consider alternative frequencies',
-      'Noise floor above -60 dBm: Poor conditions, relocate or mitigate interference'
+      { condition: 'Noise floor below -80 dBm', result: 'Excellent conditions', color: '#22c55e' },
+      { condition: 'Noise floor -80 to -70 dBm', result: 'Good conditions, proceed with caution', color: '#eab308' },
+      { condition: 'Noise floor -70 to -60 dBm', result: 'Marginal, consider alternative frequencies', color: '#f59e0b' },
+      { condition: 'Noise floor above -60 dBm', result: 'Poor conditions, relocate or mitigate interference', color: '#ef4444' }
     ]
   },
   {
@@ -2631,39 +2647,184 @@ export default function RFSiteAssessment() {
                 const isCompleted = wizardData.completedTests[test.id];
                 
                 return (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-                    {/* Test Header */}
-                    <div style={{
-                      padding: '24px',
-                      backgroundColor: '#1a2332',
-                      borderRadius: '12px',
-                      border: '2px solid #2d3748'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'start', gap: '16px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                    {/* Test Steps */}
+                    {test.sections ? (
+                      // New visual format for Initial Scan
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                        {test.sections.map((section, sectionIdx) => {
+                          const IconComponent = section.icon === 'Settings' ? Settings : section.icon === 'MapPin' ? MapPin : Activity;
+                          return (
+                            <div key={sectionIdx} style={{
+                              padding: '24px',
+                              backgroundColor: '#0d1117',
+                              borderRadius: '12px',
+                              border: '2px solid #2d3748'
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
+                                <div style={{
+                                  width: '40px',
+                                  height: '40px',
+                                  borderRadius: '8px',
+                                  backgroundColor: '#06b6d4',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center'
+                                }}>
+                                  <IconComponent size={22} color="#0a0e14" />
+                                </div>
+                                <div>
+                                  <h4 style={{ fontSize: '16px', color: '#e6edf3', margin: 0, fontWeight: '600' }}>
+                                    {section.title}
+                                  </h4>
+                                  <div style={{ fontSize: '12px', color: '#6b7785', marginTop: '2px' }}>
+                                    {section.steps.length} steps
+                                  </div>
+                                </div>
+                              </div>
+                              
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                {section.steps.map((step, stepIdx) => (
+                                  <div key={stepIdx} style={{
+                                    padding: '16px',
+                                    backgroundColor: '#141a23',
+                                    borderRadius: '8px',
+                                    border: '1px solid #2d3748',
+                                    display: 'flex',
+                                    gap: '16px',
+                                    alignItems: 'start'
+                                  }}>
+                                    <div style={{
+                                      minWidth: '28px',
+                                      height: '28px',
+                                      borderRadius: '6px',
+                                      backgroundColor: '#0c2d3d',
+                                      border: '2px solid #06b6d4',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      color: '#06b6d4',
+                                      fontSize: '13px',
+                                      fontWeight: '700',
+                                      flexShrink: 0
+                                    }}>
+                                      {sectionIdx === 0 ? stepIdx + 1 : stepIdx + 6}
+                                    </div>
+                                    <div style={{ flex: 1 }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '6px' }}>
+                                        <div style={{ fontSize: '14px', color: '#e6edf3', fontWeight: '500' }}>
+                                          {step.text}
+                                        </div>
+                                        <div style={{
+                                          fontSize: '11px',
+                                          color: '#06b6d4',
+                                          backgroundColor: '#0c2d3d',
+                                          padding: '3px 8px',
+                                          borderRadius: '4px',
+                                          fontWeight: '600',
+                                          marginLeft: '12px',
+                                          flexShrink: 0
+                                        }}>
+                                          {step.duration}
+                                        </div>
+                                      </div>
+                                      <div style={{ fontSize: '12px', color: '#6b7785', lineHeight: '1.5' }}>
+                                        {step.detail}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        
+                        {/* Analysis Section */}
                         <div style={{
-                          minWidth: '60px',
-                          height: '60px',
+                          padding: '24px',
+                          backgroundColor: '#141a23',
                           borderRadius: '12px',
-                          backgroundColor: isCompleted ? '#166534' : '#0c2d3d',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center'
+                          border: '2px solid #f59e0b'
                         }}>
-                          {isCompleted ? <CheckCircle size={30} color="#22c55e" /> : <Activity size={30} color="#06b6d4" />}
-                        </div>
-                        <div style={{ flex: 1 }}>
-                          <h3 style={{ fontSize: '20px', color: '#e6edf3', margin: '0 0 8px 0', fontWeight: '600' }}>
-                            {test.name}
-                          </h3>
-                          <p style={{ fontSize: '14px', color: '#6b7785', margin: 0 }}>
-                            {test.description}
-                          </p>
+                          <h4 style={{
+                            fontSize: '14px',
+                            color: '#f59e0b',
+                            margin: '0 0 16px 0',
+                            fontWeight: '600',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px'
+                          }}>
+                            <AlertTriangle size={18} />
+                            Interpretation Guide
+                          </h4>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            {test.analysis.map((item, idx) => (
+                              <div key={idx} style={{
+                                padding: '14px',
+                                backgroundColor: '#0d1117',
+                                borderRadius: '8px',
+                                borderLeft: `4px solid ${item.color}`,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '12px'
+                              }}>
+                                <div style={{
+                                  width: '8px',
+                                  height: '8px',
+                                  borderRadius: '50%',
+                                  backgroundColor: item.color,
+                                  flexShrink: 0
+                                }} />
+                                <div style={{ flex: 1 }}>
+                                  <span style={{ fontSize: '13px', color: '#e6edf3', fontWeight: '600' }}>
+                                    {item.condition}
+                                  </span>
+                                  <span style={{ fontSize: '13px', color: '#6b7785', marginLeft: '8px' }}>
+                                    → {item.result}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    ) : (
+                      // Original format for other tests
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                        <div style={{
+                          padding: '24px',
+                          backgroundColor: '#1a2332',
+                          borderRadius: '12px',
+                          border: '2px solid #2d3748'
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'start', gap: '16px' }}>
+                            <div style={{
+                              minWidth: '60px',
+                              height: '60px',
+                              borderRadius: '12px',
+                              backgroundColor: isCompleted ? '#166534' : '#0c2d3d',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}>
+                              {isCompleted ? <CheckCircle size={30} color="#22c55e" /> : <Activity size={30} color="#06b6d4" />}
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <h3 style={{ fontSize: '20px', color: '#e6edf3', margin: '0 0 8px 0', fontWeight: '600' }}>
+                                {test.name}
+                              </h3>
+                              <p style={{ fontSize: '14px', color: '#6b7785', margin: 0 }}>
+                                {test.description}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
 
-                    {/* Equipment Images */}
-                    <div style={{
+                        {/* Equipment Images */}
+                        <div style={{
                       padding: '24px',
                       backgroundColor: '#0d1117',
                       borderRadius: '12px',
@@ -2771,8 +2932,10 @@ export default function RFSiteAssessment() {
                         ))}
                       </div>
                     </div>
+                      </div>
+                    )}
 
-                    {/* Test Results Input */}
+                    {/* Test Results Input - applies to all tests */}
                     <div style={{
                       padding: '24px',
                       backgroundColor: '#1a2332',
