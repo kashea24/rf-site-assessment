@@ -1004,6 +1004,11 @@ export default function RFSiteAssessment() {
   const [loadingInterference, setLoadingInterference] = useState(false);
   const [interferenceHistory, setInterferenceHistory] = useState([]);
   const [showInterferenceHistory, setShowInterferenceHistory] = useState(false);
+  
+  // Venue search state
+  const [venueSearchResults, setVenueSearchResults] = useState([]);
+  const [searchingVenues, setSearchingVenues] = useState(false);
+  const [showVenueDropdown, setShowVenueDropdown] = useState(false);
 
   // Load saved wizard data from localStorage on mount
   useEffect(() => {
@@ -1033,7 +1038,8 @@ export default function RFSiteAssessment() {
     }
   }, [wizardData]);
 
-  // Initialize Geoapify address autocomplete
+  // Initialize Geoapify address autocomplete - TEMPORARILY DISABLED FOR DEBUGGING
+  /*
   useEffect(() => {
     if (showWizard && wizardStep === 0 && !wizardData.venueName && addressInputRef.current) {
       // Clean up existing autocomplete if any
@@ -1111,6 +1117,7 @@ export default function RFSiteAssessment() {
       }
     };
   }, [showWizard, wizardStep, wizardData.venueName]);
+  */
   
   // Fetch interference data when venue location is selected
   useEffect(() => {
@@ -1175,6 +1182,49 @@ export default function RFSiteAssessment() {
       }
     }
   }, []);
+  
+  // Search venues using Geoapify Geocoding API
+  const searchVenues = useCallback(async (query) => {
+    if (!query || query.length < 3) {
+      setVenueSearchResults([]);
+      setShowVenueDropdown(false);
+      return;
+    }
+    
+    setSearchingVenues(true);
+    
+    try {
+      const response = await fetch(
+        `https://api.geoapify.com/v1/geocode/autocomplete?text=${encodeURIComponent(query)}&type=amenity&limit=5&apiKey=${GEOAPIFY_API_KEY}`
+      );
+      
+      if (!response.ok) throw new Error('Search failed');
+      
+      const data = await response.json();
+      setVenueSearchResults(data.features || []);
+      setShowVenueDropdown(true);
+      
+      logger.debug('Wizard', 'Venue search complete', { query, resultCount: data.features?.length || 0 });
+    } catch (error) {
+      logger.error('Wizard', 'Venue search failed', { error: error.message });
+      setVenueSearchResults([]);
+    } finally {
+      setSearchingVenues(false);
+    }
+  }, []);
+  
+  // Debounce venue search
+  useEffect(() => {
+    if (!showWizard || wizardStep !== 0) return;
+    
+    const timer = setTimeout(() => {
+      if (wizardData.venueName && !wizardData.locationData) {
+        searchVenues(wizardData.venueName);
+      }
+    }, 500);
+    
+    return () => clearTimeout(timer);
+  }, [wizardData.venueName, wizardData.locationData, showWizard, wizardStep, searchVenues]);
 
   // Initialize connection manager
   useEffect(() => {
@@ -1656,6 +1706,32 @@ export default function RFSiteAssessment() {
         </div>
         
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          {/* Clear Cache Button - TEMPORARY */}
+          <button
+            onClick={() => {
+              if (confirm('Clear all cached data? This will reset the app and reload.')) {
+                localStorage.clear();
+                window.location.reload();
+              }
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 12px',
+              backgroundColor: '#991b1b',
+              borderRadius: '6px',
+              border: '1px solid #dc2626',
+              color: '#fecaca',
+              fontSize: '11px',
+              fontWeight: '600',
+              cursor: 'pointer'
+            }}
+          >
+            <Trash2 size={12} />
+            Clear All Data
+          </button>
+          
           {/* Connection Status */}
           <button
             onClick={() => connectionStatus.connected ? disconnectDevice() : setShowConnectionModal(true)}
@@ -2049,23 +2125,108 @@ export default function RFSiteAssessment() {
                         VENUE NAME *
                       </label>
                       
-                      {/* Show autocomplete search when no venue selected */}
-                      {!wizardData.venueName ? (
-                        <>
-                          <div 
-                            key="geoapify-search"
-                            ref={addressInputRef}
-                            id="geoapify-autocomplete-container"
+                      {/* Text input for venue search */}
+                      {!wizardData.locationData ? (
+                        <div style={{ position: 'relative' }}>
+                          <input
+                            type="text"
+                            value={wizardData.venueName || ''}
+                            onChange={(e) => {
+                              setWizardData(prev => ({ ...prev, venueName: e.target.value }));
+                            }}
+                            onFocus={() => {
+                              if (venueSearchResults.length > 0) setShowVenueDropdown(true);
+                            }}
+                            placeholder="Type venue name or address..."
                             style={{
                               width: '100%',
-                              position: 'relative',
-                              minHeight: '48px'
+                              padding: '12px 16px',
+                              backgroundColor: '#0d1117',
+                              border: '2px solid #2d3748',
+                              borderRadius: '8px',
+                              color: '#e6edf3',
+                              fontSize: '14px'
                             }}
                           />
+                          
+                          {searchingVenues && (
+                            <div style={{
+                              position: 'absolute',
+                              right: '12px',
+                              top: '50%',
+                              transform: 'translateY(-50%)',
+                              color: '#06b6d4'
+                            }}>
+                              <Activity size={16} style={{ animation: 'spin 1s linear infinite' }} />
+                            </div>
+                          )}
+                          
+                          {/* Autocomplete dropdown */}
+                          {showVenueDropdown && venueSearchResults.length > 0 && (
+                            <div style={{
+                              position: 'absolute',
+                              top: '100%',
+                              left: 0,
+                              right: 0,
+                              marginTop: '4px',
+                              backgroundColor: '#141a23',
+                              border: '2px solid #2d3748',
+                              borderRadius: '8px',
+                              maxHeight: '300px',
+                              overflowY: 'auto',
+                              zIndex: 1000,
+                              boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)'
+                            }}>
+                              {venueSearchResults.map((result, idx) => {
+                                const placeName = result.properties.name || result.properties.address_line1 || 'Unknown';
+                                const address = result.properties.formatted || '';
+                                
+                                return (
+                                  <div
+                                    key={idx}
+                                    onClick={() => {
+                                      setWizardData(prev => ({
+                                        ...prev,
+                                        venueName: placeName,
+                                        venueAddress: address,
+                                        locationData: {
+                                          city: result.properties.city || '',
+                                          state: result.properties.state || '',
+                                          country: result.properties.country || '',
+                                          lat: result.properties.lat,
+                                          lon: result.properties.lon,
+                                          formatted: address
+                                        }
+                                      }));
+                                      setShowVenueDropdown(false);
+                                      setVenueSearchResults([]);
+                                      logger.info('Wizard', 'Venue selected from search', { venueName: placeName, address });
+                                    }}
+                                    style={{
+                                      padding: '12px 16px',
+                                      borderBottom: idx < venueSearchResults.length - 1 ? '1px solid #2d3748' : 'none',
+                                      cursor: 'pointer',
+                                      transition: 'background-color 0.2s'
+                                    }}
+                                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1a2332'}
+                                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                                  >
+                                    <div style={{ fontSize: '13px', color: '#e6edf3', fontWeight: '600', marginBottom: '4px' }}>
+                                      {placeName}
+                                    </div>
+                                    <div style={{ fontSize: '11px', color: '#9ca3af', lineHeight: '1.4' }}>
+                                      {address}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                          
                           <div style={{ fontSize: '11px', color: '#6b7785', marginTop: '6px' }}>
-                            💡 Search for venue by name or location
+                            💡 Start typing - suggestions will appear as you type (min 3 characters)
                           </div>
-                        </>
+                        </div>
                       ) : null}
                       
                       {/* Display selected venue details */}
