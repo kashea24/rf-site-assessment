@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Radio, Antenna, Activity, FileText, Settings, AlertTriangle, CheckCircle, Clock, MapPin, Wifi, Zap, BarChart3, List, BookOpen, ChevronRight, Play, Pause, Download, Plus, Trash2, Eye, Signal, Usb, RefreshCw, X, Sliders, Ruler, Navigation, Target } from 'lucide-react';
 import { logger } from './logger.js';
+import FloorPlanUpload from './components/FloorPlan/FloorPlanUpload';
+import FloorPlanCanvas from './components/FloorPlan/FloorPlanCanvas';
 
 // Geoapify API key
 const GEOAPIFY_API_KEY = '27252b47c9ff4eed94d3daf8a0265654';
@@ -602,6 +604,51 @@ const ABONAIR_BANDS = [
 // Test Procedures Data
 const TEST_PROCEDURES = [
   {
+    id: 'floor-plan-mapping',
+    name: 'Floor Plan Mapping',
+    duration: '15-20 min',
+    description: 'Upload venue floor plan and map RF environment with grid-based measurement zones',
+    equipment: [
+      { name: 'Venue Floor Plan PDF', role: 'Spatial Reference', icon: 'FileText' },
+      { name: 'Measuring Tape', role: 'Dimension Verification', icon: 'Ruler' }
+    ],
+    sections: [
+      {
+        title: 'Floor Plan Upload',
+        icon: 'FileText',
+        steps: [
+          { text: 'Obtain venue floor plan PDF from management', duration: '2 min', detail: 'Request architectural drawings or stage plots' },
+          { text: 'Upload PDF to tool', duration: '1 min', detail: 'Drag and drop or click to browse' },
+          { text: 'Verify scale and orientation', duration: '2 min', detail: 'Compare measurements with venue dimensions' }
+        ]
+      },
+      {
+        title: 'Boundary Definition',
+        icon: 'Target',
+        steps: [
+          { text: 'Select "Draw Boundary" tool from bottom toolbar', duration: '30 sec', detail: 'Red boundary button' },
+          { text: 'Click to define event area perimeter points', duration: '2-3 min', detail: 'Include all areas where cameras will operate' },
+          { text: 'Click "Close Stroke" to complete boundary', duration: '10 sec', detail: 'Grid will auto-generate within boundary' },
+          { text: 'Adjust grid rows/columns using +/- buttons', duration: '1 min', detail: 'Match venue layout - typically 5-10 cells per dimension' }
+        ]
+      },
+      {
+        title: 'Interference Object Placement',
+        icon: 'MapPin',
+        steps: [
+          { text: 'Place LED Wall markers on stage positions', duration: '2 min', detail: 'Drag existing or add new with LED Wall tool' },
+          { text: 'Mark WiFi AP locations throughout venue', duration: '3-5 min', detail: 'Use WiFi AP tool, place at access point locations' },
+          { text: 'Position Comms Rx at planned receiver locations', duration: '2 min', detail: 'Use Comms Rx tool for antenna positions' }
+        ]
+      }
+    ],
+    analysis: [
+      { condition: 'Grid covers entire camera operation area', result: 'Ready for measurement phase', color: '#22c55e' },
+      { condition: 'All interference sources marked', result: 'Complete RF environment documented', color: '#22c55e' },
+      { condition: 'Missing floor plan or boundary', result: 'Cannot proceed - floor plan required', color: '#ef4444' }
+    ]
+  },
+  {
     id: 'initial-scan',
     name: 'Initial Site RF Scan',
     duration: '10-15 min',
@@ -980,6 +1027,23 @@ export default function RFSiteAssessment() {
     venueType: '',
     venueAddress: '',
     locationData: null,
+    // Floor Plan data
+    floorPlan: null,
+    boundaries: [],
+    gridConfig: null,
+    gridRows: 5,
+    gridCols: 5,
+    landmarks: [],
+    ledWalls: [],
+    gridMeasurements: {},
+    selectedCell: null,
+    drawBoundaryMode: false,
+    ledWallMode: false,
+    testingMode: false,
+    contextMenu: null,
+    clipboard: null,
+    boundaryStrokeColor: '#ef4444',
+    ledWallColor: '#22c55e',
     // Test procedure tracking
     completedTests: {},
     testNotes: {}
@@ -1865,7 +1929,7 @@ export default function RFSiteAssessment() {
           padding: '40px 20px'
         }}>
           <div style={{
-            maxWidth: '1000px',
+            maxWidth: wizardStep > 0 && TEST_PROCEDURES[wizardStep - 1]?.id === 'floor-plan-mapping' ? '95vw' : '1000px',
             margin: '0 auto',
             backgroundColor: '#141a23',
             borderRadius: '16px',
@@ -2646,6 +2710,281 @@ export default function RFSiteAssessment() {
                 const test = TEST_PROCEDURES[wizardStep - 1];
                 const isCompleted = wizardData.completedTests[test.id];
                 
+                // Special rendering for floor plan step
+                if (test.id === 'floor-plan-mapping') {
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                      {/* Floor Plan Upload or Canvas */}
+                      {!wizardData.floorPlan ? (
+                        <div style={{
+                          padding: '60px 40px',
+                          backgroundColor: '#0d1117',
+                          borderRadius: '12px',
+                          border: '2px dashed #2d3748',
+                          textAlign: 'center'
+                        }}>
+                          <FileText size={64} color="#6b7785" style={{ margin: '0 auto 24px' }} />
+                          <h3 style={{ fontSize: '20px', color: '#e6edf3', marginBottom: '16px' }}>
+                            Upload Venue Floor Plan
+                          </h3>
+                          <p style={{ fontSize: '14px', color: '#6b7785', marginBottom: '24px', maxWidth: '500px', margin: '0 auto 24px' }}>
+                            Upload a PDF floor plan to begin mapping your RF environment
+                          </p>
+                          <FloorPlanUpload
+                            onUploadComplete={(floorPlan) => {
+                              console.log('📝 Floor plan uploaded to wizard:', floorPlan);
+                              setWizardData(prev => ({ ...prev, floorPlan }));
+                              logger.info('Wizard', 'Floor plan uploaded', { name: floorPlan.name });
+                            }}
+                          />
+                        </div>
+                      ) : (
+                        <div style={{
+                          backgroundColor: '#0d1117',
+                          borderRadius: '12px',
+                          border: '2px solid #2d3748',
+                          overflow: 'hidden',
+                          minHeight: '700px',
+                          height: 'calc(100vh - 300px)'
+                        }}>
+                          <FloorPlanCanvas
+                            floorPlanImage={wizardData.floorPlan?.image}
+                            boundaries={wizardData.boundaries}
+                            onBoundariesChange={(boundaries) => {
+                              console.log('🗺️ Boundaries updated:', boundaries.length);
+                              setWizardData(prev => ({ ...prev, boundaries }));
+                            }}
+                            gridConfig={wizardData.gridConfig}
+                            showGrid={!!wizardData.gridConfig}
+                            onGenerateGrid={(providedBoundary) => {
+                              console.log('🔧 Generate grid called in wizard');
+                              const boundary = providedBoundary || wizardData.boundaries[0];
+                              if (!boundary || !boundary.points) return;
+                              
+                              let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                              boundary.points.forEach(point => {
+                                minX = Math.min(minX, point.x);
+                                maxX = Math.max(maxX, point.x);
+                                minY = Math.min(minY, point.y);
+                                maxY = Math.max(maxY, point.y);
+                              });
+                              
+                              const grid = {
+                                rows: wizardData.gridRows,
+                                cols: wizardData.gridCols,
+                                width: maxX - minX,
+                                height: maxY - minY,
+                                centerX: (minX + maxX) / 2,
+                                centerY: (minY + maxY) / 2,
+                                offsetX: minX,
+                                offsetY: minY,
+                                boundary: boundary.points
+                              };
+                              
+                              console.log('✅ Setting gridConfig in wizard:', grid);
+                              setWizardData(prev => ({ ...prev, gridConfig: grid }));
+                              logger.info('Wizard', 'Grid generated', { rows: grid.rows, cols: grid.cols });
+                            }}
+                            gridRows={wizardData.gridRows}
+                            gridCols={wizardData.gridCols}
+                            onGridRowsChange={(rows) => setWizardData(prev => ({ ...prev, gridRows: rows }))}
+                            onGridColsChange={(cols) => setWizardData(prev => ({ ...prev, gridCols: cols }))}
+                            landmarks={wizardData.landmarks}
+                            onLandmarksChange={(landmarks) => setWizardData(prev => ({ ...prev, landmarks }))}
+                            ledWalls={wizardData.ledWalls}
+                            onLedWallsChange={(ledWalls) => setWizardData(prev => ({ ...prev, ledWalls }))}
+                            gridMeasurements={wizardData.gridMeasurements}
+                            onGridMeasurementsChange={(measurements) => setWizardData(prev => ({ ...prev, gridMeasurements: measurements }))}
+                            selectedGridCell={wizardData.selectedCell}
+                            onGridCellClick={(cell) => {
+                              console.log('🔲 Grid cell clicked:', cell);
+                              setWizardData(prev => ({ ...prev, selectedCell: cell }));
+                            }}
+                            testingMode={wizardData.testingMode}
+                            contextMenu={wizardData.contextMenu}
+                            onContextMenuChange={(menu) => {
+                              console.log('📋 Context menu:', menu);
+                              setWizardData(prev => ({ ...prev, contextMenu: menu }));
+                            }}
+                            clipboard={wizardData.clipboard}
+                            onCopyItem={(item) => {
+                              console.log('📋 Copy item:', item);
+                              setWizardData(prev => ({ ...prev, clipboard: { ...item, id: undefined }, contextMenu: null }));
+                              logger.info('Wizard', 'Copied item to clipboard', { type: item.type });
+                            }}
+                            onPasteItem={(x, y) => {
+                              if (!wizardData.clipboard) return;
+                              console.log('📋 Paste item at:', x, y);
+                              
+                              const newItem = {
+                                ...wizardData.clipboard,
+                                id: Date.now(),
+                                x: x !== undefined ? x : wizardData.clipboard.x + 20,
+                                y: y !== undefined ? y : wizardData.clipboard.y + 20
+                              };
+                              
+                              if (wizardData.clipboard.type === 'ledWall') {
+                                setWizardData(prev => ({
+                                  ...prev,
+                                  ledWalls: [...prev.ledWalls, newItem],
+                                  contextMenu: null
+                                }));
+                              } else {
+                                setWizardData(prev => ({
+                                  ...prev,
+                                  landmarks: [...prev.landmarks, newItem],
+                                  contextMenu: null
+                                }));
+                              }
+                              logger.info('Wizard', 'Pasted item', { type: newItem.type });
+                            }}
+                            onClearCellMeasurement={(row, col) => {
+                              const cellKey = `${row}-${col}`;
+                              setWizardData(prev => {
+                                const newMeasurements = { ...prev.gridMeasurements };
+                                delete newMeasurements[cellKey];
+                                return { ...prev, gridMeasurements: newMeasurements, contextMenu: null };
+                              });
+                              logger.info('Wizard', 'Cleared cell measurement', { row, col });
+                            }}
+                            onDeleteLedWall={(id) => {
+                              setWizardData(prev => ({
+                                ...prev,
+                                ledWalls: prev.ledWalls.filter(w => w.id !== id)
+                              }));
+                            }}
+                            onDeleteBoundaryByIndex={(idx) => {
+                              setWizardData(prev => ({
+                                ...prev,
+                                boundaries: prev.boundaries.filter((_, i) => i !== idx),
+                                // Clear grid config when boundary is deleted
+                                gridConfig: null
+                              }));
+                            }}
+                            drawBoundaryMode={wizardData.drawBoundaryMode}
+                            onDrawBoundaryModeChange={(mode) => setWizardData(prev => ({ ...prev, drawBoundaryMode: mode }))}
+                            boundaryStrokeColor={wizardData.boundaryStrokeColor}
+                            onBoundaryColorChange={(color) => setWizardData(prev => ({ ...prev, boundaryStrokeColor: color }))}
+                            ledWallMode={wizardData.ledWallMode}
+                            onLedWallModeChange={(mode) => setWizardData(prev => ({ ...prev, ledWallMode: mode }))}
+                            ledWallColor={wizardData.ledWallColor}
+                            onLedWallColorChange={(color) => setWizardData(prev => ({ ...prev, ledWallColor: color }))}
+                            onDeleteLandmark={(id) => {
+                              setWizardData(prev => ({
+                                ...prev,
+                                landmarks: prev.landmarks.filter(l => l.id !== id)
+                              }));
+                            }}
+                            onAddWifiAP={(point) => {
+                              setWizardData(prev => ({
+                                ...prev,
+                                landmarks: [...prev.landmarks, { id: Date.now(), type: 'wifi', x: point.x, y: point.y }]
+                              }));
+                            }}
+                            onAddCommsRx={(point) => {
+                              setWizardData(prev => ({
+                                ...prev,
+                                landmarks: [...prev.landmarks, { id: Date.now(), type: 'antenna', x: point.x, y: point.y }]
+                              }));
+                            }}
+                            onUndo={() => {}}
+                            onRedo={() => {}}
+                            canUndo={false}
+                            canRedo={false}
+                          />
+                        </div>
+                      )}
+                      
+                      {/* Action Buttons */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '20px' }}>
+                        {wizardData.floorPlan && wizardData.gridConfig && (
+                          <>
+                            {!wizardData.testingMode ? (
+                              <button
+                                onClick={() => {
+                                  console.log('🧪 Entering testing mode');
+                                  setWizardData(prev => ({ ...prev, testingMode: true }));
+                                  logger.info('Wizard', 'Switched to testing mode');
+                                }}
+                                style={{
+                                  padding: '12px 24px',
+                                  backgroundColor: '#06b6d4',
+                                  border: 'none',
+                                  borderRadius: '8px',
+                                  color: '#0a0e14',
+                                  fontSize: '14px',
+                                  fontWeight: '600',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '8px'
+                                }}
+                              >
+                                <Activity size={18} />
+                                Start Testing Mode
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  console.log('✏️ Returning to edit mode');
+                                  setWizardData(prev => ({ ...prev, testingMode: false }));
+                                  logger.info('Wizard', 'Switched to edit mode');
+                                }}
+                                style={{
+                                  padding: '12px 24px',
+                                  backgroundColor: '#f59e0b',
+                                  border: 'none',
+                                  borderRadius: '8px',
+                                  color: '#0a0e14',
+                                  fontSize: '14px',
+                                  fontWeight: '600',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '8px'
+                                }}
+                              >
+                                <MapPin size={18} />
+                                Back to Edit
+                              </button>
+                            )}
+                          </>
+                        )}
+                        
+                        <button
+                          onClick={() => {
+                            setWizardData(prev => ({
+                              ...prev,
+                              completedTests: { ...prev.completedTests, [test.id]: true }
+                            }));
+                            logger.info('Wizard', 'Floor plan mapping completed');
+                          }}
+                          disabled={!wizardData.floorPlan || !wizardData.gridConfig}
+                          style={{
+                            padding: '12px 24px',
+                            backgroundColor: (wizardData.floorPlan && wizardData.gridConfig) ? '#22c55e' : '#1f2937',
+                            border: 'none',
+                            borderRadius: '8px',
+                            color: (wizardData.floorPlan && wizardData.gridConfig) ? '#0a0e14' : '#6b7785',
+                            fontSize: '14px',
+                            fontWeight: '600',
+                            cursor: (wizardData.floorPlan && wizardData.gridConfig) ? 'pointer' : 'not-allowed',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            opacity: (wizardData.floorPlan && wizardData.gridConfig) ? 1 : 0.5,
+                            marginLeft: 'auto'
+                          }}
+                        >
+                          <CheckCircle size={18} />
+                          {isCompleted ? 'Completed' : 'Mark as Complete'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+                
+                // Regular test procedure rendering
                 return (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                     {/* Test Steps */}

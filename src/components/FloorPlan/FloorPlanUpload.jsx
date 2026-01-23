@@ -17,8 +17,8 @@ export default function FloorPlanUpload({ onUploadComplete, currentFloorPlan }) 
       return;
     }
 
-    if (file.size > 10 * 1024 * 1024) { // 10MB limit
-      setError('File size must be less than 10MB');
+    if (file.size > 50 * 1024 * 1024) { // 50MB limit
+      setError('File size must be less than 50MB');
       logger.error('FloorPlan', 'File too large:', file.size);
       return;
     }
@@ -36,8 +36,9 @@ export default function FloorPlanUpload({ onUploadComplete, currentFloorPlan }) 
         uploadedAt: new Date().toISOString()
       });
     } catch (err) {
-      logger.error('FloorPlan', 'PDF conversion failed:', err.message);
-      setError('Failed to convert PDF. Please try another file.');
+      console.error('PDF conversion error:', err);
+      logger.error('FloorPlan', 'PDF conversion failed:', err.message, err.stack);
+      setError(`Failed to convert PDF: ${err.message || 'Unknown error'}`);
     } finally {
       setUploading(false);
     }
@@ -111,7 +112,7 @@ export default function FloorPlanUpload({ onUploadComplete, currentFloorPlan }) 
           {uploading ? 'Converting PDF...' : 'Upload Venue Floor Plan'}
         </div>
         <div style={{ fontSize: '14px', color: '#6b7785', marginBottom: '16px' }}>
-          PDF files up to 10MB • First page will be used
+          PDF files up to 50MB • First page will be used
         </div>
         {!uploading && (
           <div style={{
