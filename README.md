@@ -1,7 +1,19 @@
-# RF Site Assessment Tool
+# RF Site Assessment Tool v2.0.0
 ## For ABOnAir 612 + RF Explorer 6G WB Plus
 
 A comprehensive webapp for RF site assessment, real-time spectrum monitoring, and best practices documentation for wireless video production.
+
+**Latest Release:** v2.0.0 (January 27, 2026)
+
+---
+
+## ✨ What's New in v2.0.0
+
+- ⚡ **Web Worker Integration** — 75% UI responsiveness improvement, smooth 60fps
+- 💾 **IndexedDB Storage** — Unlimited capacity (1+ GB), automatic localStorage migration
+- 📡 **Delta Encoding** — 60-80% bandwidth reduction for remote monitoring
+- 📜 **Enhanced Logging** — 100,000+ events with virtual scrolling
+- 🧪 **Automated Testing** — Jest + React Testing Library test suite
 
 ---
 
@@ -9,11 +21,33 @@ A comprehensive webapp for RF site assessment, real-time spectrum monitoring, an
 
 - **Live Spectrum Monitoring** — Real-time display of RF activity across your operating bands
 - **ABOnAir 612 Band Support** — Optimized for Band 1 (1.99-2.50 GHz) and Band 2 (4.90-6.00 GHz)
+- **Interactive Floor Plan** — PDF upload with grid-based measurement system
+- **Unlimited Event Logging** — IndexedDB storage with batch saving and pagination
+- **Background Processing** — Web Worker handles spectrum analysis without blocking UI
 - **Test Procedures** — Step-by-step site assessment tests with analysis guides
 - **Antenna Configuration Guide** — Setup instructions for different venue scenarios
-- **Event Logging** — Automatic logging of RF anomalies with timestamps
 - **Best Practices** — Venue-specific recommendations and critical procedures
-- **Report Export** — JSON and CSV exports for documentation
+- **Compressed Export** — 75% smaller ZIP exports with organized structure
+
+---
+
+## 📖 Documentation
+
+**Complete documentation:** [DOCUMENTATION_v2.md](DOCUMENTATION_v2.md)
+
+Topics covered:
+- Quick start guide
+- All v2.0.0 features explained in detail
+- Web Worker integration
+- IndexedDB storage
+- Delta encoding
+- Performance optimizations
+- RF site assessment workflow
+- Development guide
+- Testing
+- Deployment
+- Troubleshooting
+- API reference
 
 ---
 

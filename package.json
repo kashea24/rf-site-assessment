@@ -1,26 +1,38 @@
 {
   "name": "rf-site-assessment",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "description": "RF Site Assessment Tool for ABOnAir 612 + RF Explorer 6G WB Plus",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "eslint . --ext js,jsx"
+    "lint": "eslint . --ext js,jsx",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
   },
   "dependencies": {
     "html2canvas": "^1.4.1",
     "jspdf": "^4.0.0",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.294.0",
     "pdfjs-dist": "^5.4.530",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "react-window": "^1.8.11"
   },
   "devDependencies": {
+    "@babel/preset-env": "^7.28.6",
+    "@babel/preset-react": "^7.28.5",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
     "@vitejs/plugin-react": "^4.2.1",
+    "jest": "^30.2.0",
+    "jest-environment-jsdom": "^30.2.0",
     "vite": "^5.0.8"
   },
   "keywords": [

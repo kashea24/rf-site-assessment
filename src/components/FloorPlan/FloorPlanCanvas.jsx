@@ -252,20 +252,57 @@ export default function FloorPlanCanvas({
         // Color based on measurement status
         const measurement = gridMeasurements[cellKey];
         if (measurement) {
-          const avgSignal = (measurement.band1?.average + measurement.band2?.average) / 2;
-          let color;
-          if (avgSignal < -70) color = 'rgba(34, 197, 94, 0.3)';
-          else if (avgSignal < -60) color = 'rgba(234, 179, 8, 0.3)';
-          else if (avgSignal < -50) color = 'rgba(245, 158, 11, 0.3)';
-          else color = 'rgba(239, 68, 68, 0.3)';
-          
-          ctx.fillStyle = color;
-          ctx.fillRect(startX + col * cellWidth, startY + row * cellHeight, cellWidth, cellHeight);
+          // Handle skipped cells - grey them out
+          if (measurement.skipped) {
+            ctx.fillStyle = 'rgba(107, 119, 133, 0.2)'; // Grey
+            ctx.fillRect(startX + col * cellWidth, startY + row * cellHeight, cellWidth, cellHeight);
+          } else if (measurement.average !== undefined) {
+            // Calculate interference score based on 4800-6100 MHz band
+            // Single band measurement (no band1/band2 split)
+            const signalLevel = measurement.average;
+            
+            // Green > Yellow > Red scale:
+            // More frequencies available without interference = greener
+            // Less frequencies available = redder
+            let color;
+            if (signalLevel < -75) {
+              // Strong green: Clear spectrum, many frequencies available
+              color = 'rgba(34, 197, 94, 0.5)'; // Green
+            } else if (signalLevel < -65) {
+              // Light green: Good spectrum
+              color = 'rgba(74, 222, 128, 0.4)'; // Light green
+            } else if (signalLevel < -55) {
+              // Yellow: Moderate interference, some frequencies available
+              color = 'rgba(234, 179, 8, 0.5)'; // Yellow
+            } else if (signalLevel < -45) {
+              // Orange: High interference, few frequencies available
+              color = 'rgba(251, 146, 60, 0.5)'; // Orange
+            } else {
+              // Red: Very high interference, very limited frequencies
+              color = 'rgba(239, 68, 68, 0.6)'; // Red
+            }
+            
+            ctx.fillStyle = color;
+            ctx.fillRect(startX + col * cellWidth, startY + row * cellHeight, cellWidth, cellHeight);
+          }
         }
+        // Note: Untested cells have no background color
 
         // Draw cell number
-        ctx.fillStyle = measurement ? '#e6edf3' : '#a1a1aa';
-        ctx.fillText(`${row * config.cols + col + 1}`, cellX, cellY);
+        if (measurement?.skipped) {
+          // Skipped cells - grey background
+          ctx.fillStyle = 'rgba(107, 119, 133, 0.4)';
+          ctx.fillRect(startX + col * cellWidth, startY + row * cellHeight, cellWidth, cellHeight);
+          ctx.fillStyle = '#e6edf3';
+          ctx.fillText(`${row * config.cols + col + 1}`, cellX, cellY);
+          // Add "SKIP" label
+          ctx.font = `${10 / viewState.zoom}px system-ui`;
+          ctx.fillText('SKIP', cellX, cellY + 12 / viewState.zoom);
+          ctx.font = `${14 / viewState.zoom}px system-ui`; // Reset font
+        } else {
+          ctx.fillStyle = measurement ? '#e6edf3' : '#a1a1aa';
+          ctx.fillText(`${row * config.cols + col + 1}`, cellX, cellY);
+        }
       }
     }
     
@@ -1468,6 +1505,39 @@ export default function FloorPlanCanvas({
               >
                 <Activity size={16} />
                 Run Test
+              </button>
+              <button
+                onClick={() => {
+                  // Mark cell as skipped
+                  const cellKey = `${contextMenu.item.row}-${contextMenu.item.col}`;
+                  onGridCellClick?.({ 
+                    ...contextMenu.item, 
+                    skipCell: true 
+                  });
+                  onContextMenuChange?.(null);
+                  logger.info('FloorPlanCanvas', 'Skip region:', contextMenu.item);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  borderRadius: '4px',
+                  color: '#f59e0b',
+                  fontSize: '13px',
+                  fontWeight: '500',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  textAlign: 'left',
+                  transition: 'background-color 0.2s'
+                }}
+                onMouseEnter={(e) => e.target.style.backgroundColor = '#2d3748'}
+                onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+              >
+                <XCircle size={16} />
+                Skip Region
               </button>
               <button
                 onClick={() => {

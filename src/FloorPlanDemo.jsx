@@ -124,6 +124,21 @@ function FloorPlanDemo() {
   };
 
   const handleGridCellClick = (cell) => {
+    // Check if this is a skip action
+    if (cell.skipCell) {
+      const cellKey = `${cell.row}-${cell.col}`;
+      // Mark cell as skipped (counts toward completion)
+      setGridMeasurements(prev => ({
+        ...prev,
+        [cellKey]: {
+          skipped: true,
+          timestamp: new Date().toISOString()
+        }
+      }));
+      logger.info('FloorPlanDemo', 'Cell skipped:', cellKey);
+      return;
+    }
+    
     setSelectedCell(cell);
   };
 
@@ -134,6 +149,8 @@ function FloorPlanDemo() {
     const cellKey = `${selectedCell.row}-${selectedCell.col}`;
     
     setTimeout(() => {
+      // Simulate readings for 4800-6100 MHz band (Band 2)
+      // Lower values = less interference = more available frequencies
       const reading = {
         peak: -50 - Math.random() * 30,
         average: -60 - Math.random() * 20,
@@ -143,12 +160,14 @@ function FloorPlanDemo() {
       setGridMeasurements(prev => ({
         ...prev,
         [cellKey]: {
-          band1: reading,
+          band1: reading, // Keep for compatibility
           band2: {
-            peak: -48 - Math.random() * 30,
-            average: -58 - Math.random() * 20,
+            // Band 2 (4800-6100 MHz) - primary focus for wireless cameras
+            peak: -48 - Math.random() * 35,
+            average: -58 - Math.random() * 25,
             noiseFloor: -90 - Math.random() * 10
-          }
+          },
+          timestamp: new Date().toISOString()
         }
       }));
       

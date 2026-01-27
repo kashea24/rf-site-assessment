@@ -1,17 +1,57 @@
+/**
+ * RF Site Assessment Tool - Main Application
+ * 
+ * Comprehensive web application for RF site assessment, spectrum monitoring,
+ * and wireless video production optimization for ABOnAir 612 + RF Explorer 6G WB Plus.
+ * 
+ * Key Features:
+ * - Real-time spectrum monitoring with Web Serial API
+ * - Interactive floor plan mapping with grid-based measurements
+ * - Automated RF event logging and anomaly detection
+ * - Best practices documentation and antenna configuration guides
+ * - Project export with compression support
+ * 
+ * Performance Optimizations:
+ * - Virtual scrolling for unlimited event logging
+ * - Blob URL storage for efficient floor plan handling
+ * - Ready for Web Worker integration and IndexedDB storage
+ * 
+ * @author Pro Level Rental
+ * @version 2.0.0
+ * @license MIT
+ */
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Radio, Antenna, Activity, FileText, Settings, AlertTriangle, CheckCircle, Clock, MapPin, Wifi, Zap, BarChart3, List, BookOpen, ChevronRight, Play, Pause, Download, Plus, Trash2, Eye, Signal, Usb, RefreshCw, X, Sliders, Ruler, Navigation, Target } from 'lucide-react';
+import { Radio, Antenna, Activity, FileText, Settings, AlertTriangle, CheckCircle, Clock, MapPin, Wifi, Zap, BarChart3, List, BookOpen, ChevronRight, Play, Pause, Download, Plus, Trash2, Eye, Signal, Usb, RefreshCw, X, Sliders, Ruler, Navigation, Target, Map } from 'lucide-react';
+import { FixedSizeList } from 'react-window';
 import { logger } from './logger.js';
+import { 
+  openDatabase, 
+  saveProject, 
+  getProject, 
+  getCurrentProject,
+  saveSetting, 
+  getSetting,
+  saveEventLogBatch
+} from './db.js';
 import FloorPlanUpload from './components/FloorPlan/FloorPlanUpload';
 import FloorPlanCanvas from './components/FloorPlan/FloorPlanCanvas';
 
-// Geoapify API key
+// Geoapify API key for venue location and interference source mapping
 const GEOAPIFY_API_KEY = '27252b47c9ff4eed94d3daf8a0265654';
 
 // ============================================================================
 // INTERFERENCE DETECTION APIs
 // ============================================================================
 
-// Fetch nearby cell towers using OpenCelliD API
+/**
+ * Fetch nearby interference sources based on venue coordinates
+ * Uses heuristic-based detection for cell towers, TV stations, and RF risk zones
+ * 
+ * @param {number} lat - Latitude coordinate
+ * @param {number} lon - Longitude coordinate
+ * @returns {Promise<Object>} Object containing cellTowers, tvStations, and risks arrays
+ */
 async function getNearbyInterferenceSources(lat, lon) {
   const results = {
     cellTowers: [],
@@ -72,7 +112,14 @@ async function getNearbyInterferenceSources(lat, lon) {
   return results;
 }
 
-// Check if coordinates are near major metro areas
+/**
+ * Check if coordinates are near major metro areas
+ * Used to predict RF congestion and interference likelihood
+ * 
+ * @param {number} lat - Latitude coordinate
+ * @param {number} lon - Longitude coordinate
+ * @returns {string|null} City name if within proximity radius, null otherwise
+ */
 function checkCityProximity(lat, lon) {
   const majorCities = [
     { name: 'New York', lat: 40.7128, lon: -74.0060, radius: 50 },
@@ -102,7 +149,14 @@ function checkCityProximity(lat, lon) {
   return null;
 }
 
-// Estimate cell tower density based on location
+/**
+ * Estimate cell tower density based on location heuristics
+ * Returns estimated tower count and sample tower data for risk assessment
+ * 
+ * @param {number} lat - Latitude coordinate
+ * @param {number} lon - Longitude coordinate
+ * @returns {Object} Object with count and towers array
+ */
 function estimateCellTowerDensity(lat, lon) {
   // Simplified heuristic: Urban areas have more towers
   const cityName = checkCityProximity(lat, lon);
@@ -129,6 +183,16 @@ function estimateCellTowerDensity(lat, lon) {
 }
 
 // Calculate distance between two coordinates (Haversine formula)
+/**
+ * Calculate distance between two coordinates using Haversine formula
+ * Returns distance in miles
+ * 
+ * @param {number} lat1 - First latitude
+ * @param {number} lon1 - First longitude
+ * @param {number} lat2 - Second latitude
+ * @param {number} lon2 - Second longitude
+ * @returns {number} Distance in miles
+ */
 function calculateDistance(lat1, lon1, lat2, lon2) {
   const R = 6371; // Earth's radius in km
   const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -237,6 +301,16 @@ class RFExplorerConnection {
           if (this.onConnectionChange) {
             this.onConnectionChange({ connected: true, type: 'websocket' });
           }
+          
+          // Enable delta encoding for WebSocket connections (typically remote/WiFi)
+          // Delta encoding reduces bandwidth by only sending changed spectrum points
+          this.websocket.send(JSON.stringify({
+            type: 'enable_delta_encoding',
+            enabled: true,
+            threshold: 1.0 // 1 dB threshold
+          }));
+          logger.info('Connection', 'Delta encoding enabled for WebSocket connection');
+          
           resolve(true);
         };
         
@@ -254,6 +328,16 @@ class RFExplorerConnection {
                 if (this.onData) {
                   this.onData(msg.data);
                 }
+              } else if (msg.type === 'connection') {
+                // Server announces capabilities (delta encoding support)
+                logger.info('Connection', 'Server capabilities received', { 
+                  features: msg.features 
+                });
+              } else if (msg.type === 'delta_encoding_status') {
+                // Acknowledgment of delta encoding settings
+                logger.info('Connection', 'Delta encoding status', { 
+                  enabled: msg.enabled 
+                });
               }
             } catch (e) {
               // Binary data as base64
@@ -647,120 +731,11 @@ const TEST_PROCEDURES = [
       { condition: 'All interference sources marked', result: 'Complete RF environment documented', color: '#22c55e' },
       { condition: 'Missing floor plan or boundary', result: 'Cannot proceed - floor plan required', color: '#ef4444' }
     ]
-  },
-  {
-    id: 'initial-scan',
-    name: 'Initial Site RF Scan',
-    duration: '10-15 min',
-    description: 'Comprehensive frequency sweep to identify existing RF activity',
-    equipment: [
-      { name: 'RF Explorer 6G WB Plus', role: 'Spectrum Analyzer', icon: 'Radio' },
-      { name: 'Laptop/Tablet', role: 'Data Collection', icon: 'Activity' }
-    ],
-    sections: [
-      {
-        title: 'Equipment Setup',
-        icon: 'Settings',
-        steps: [
-          { text: 'Power on RF Explorer 6G WB Plus', duration: '2 min', detail: 'Allow full warm-up for accurate readings' },
-          { text: 'Connect RF Explorer to computer via USB', duration: '30 sec', detail: 'Use high-quality USB cable for stable connection' },
-          { text: 'Click "Connect Device" and select RF Explorer port', duration: '30 sec', detail: 'Should appear as USB Serial device' },
-          { text: 'Set frequency range to 1.9-6.1 GHz', duration: '1 min', detail: 'Covers both ABOnAir bands completely' },
-          { text: 'Enable "Max Hold" mode in monitor settings', duration: '30 sec', detail: 'Captures peak signals during walkthrough' }
-        ]
-      },
-      {
-        title: 'Venue Survey (Steps 6-10)',
-        icon: 'MapPin',
-        steps: [
-          { text: 'Walk entire venue perimeter while monitoring', duration: '5-8 min', detail: 'Maintain steady pace, RF Explorer at shoulder height' },
-          { text: 'Note signals above -60 dBm threshold', duration: 'Continuous', detail: 'Orange/red markers indicate interference' },
-          { text: 'Document WiFi AP locations', duration: 'As found', detail: 'Mark on floor plan or note GPS coordinates' },
-          { text: 'Identify interference sources', duration: 'As found', detail: 'LED walls, DMX, intercom systems, lighting dimmers' },
-          { text: 'Record baseline noise floor with peak markers', duration: '2 min', detail: 'Cleanest frequency window in each band' }
-        ]
-      }
-    ],
-    analysis: [
-      { condition: 'Noise floor below -80 dBm', result: 'Excellent conditions', color: '#22c55e' },
-      { condition: 'Noise floor -80 to -70 dBm', result: 'Good conditions, proceed with caution', color: '#eab308' },
-      { condition: 'Noise floor -70 to -60 dBm', result: 'Marginal, consider alternative frequencies', color: '#f59e0b' },
-      { condition: 'Noise floor above -60 dBm', result: 'Poor conditions, relocate or mitigate interference', color: '#ef4444' }
-    ]
-  },
-  {
-    id: 'frequency-selection',
-    name: 'Frequency Selection Test',
-    duration: '15-20 min',
-    description: 'Identify optimal operating frequencies within ABOnAir bands',
-    steps: [
-      'Review initial scan results for clear frequency windows',
-      'Use the band selector to focus on ABOnAir Band 1 (1.99-2.50 GHz)',
-      'Enable "Average" mode and observe for 3 minutes',
-      'Document quietest 40 MHz segments using peak markers',
-      'Switch to Band 2 (4.90-6.00 GHz) and repeat',
-      'Cross-reference with local WiFi channel allocations',
-      'Verify FCC compliance for selected frequencies',
-      'Document primary and backup frequency selections',
-      'Test selected frequencies at all planned camera positions'
-    ],
-    analysis: [
-      'Band 1 (2.4 GHz region): Higher WiFi congestion, better penetration',
-      'Band 2 (5 GHz region): Less congestion, shorter range, requires better LOS',
-      'Select frequencies at least 40 MHz away from strong signals',
-      'Always have 2-3 backup frequencies documented'
-    ]
-  },
-  {
-    id: 'path-loss',
-    name: 'Path Loss Assessment',
-    duration: '20-30 min',
-    description: 'Measure signal propagation throughout the venue',
-    steps: [
-      'Position ABOnAir TX at planned camera location',
-      'Set TX to lowest power setting initially',
-      'Position RX at planned receiver location',
-      'Use RF Explorer to measure TX signal strength at RX position',
-      'Record signal strength - this is your reference level',
-      'Walk TX through all planned camera movement areas',
-      'Monitor signal strength variations in real-time',
-      'Use event logging to mark dead zones (enable auto-logging)',
-      'Identify multipath reflection sources (metal structures, glass)',
-      'Document minimum signal margin requirements',
-      'Increase TX power if needed to maintain >6 dB margin'
-    ],
-    analysis: [
-      'Signal margin >12 dB: Excellent, full mobility',
-      'Signal margin 6-12 dB: Good, monitor during event',
-      'Signal margin <6 dB: Critical, optimize antenna placement',
-      'Dead zones require antenna repositioning or diversity RX'
-    ]
-  },
-  {
-    id: 'interference-test',
-    name: 'Dynamic Interference Test',
-    duration: '30+ min',
-    description: 'Simulate event conditions to identify time-variant interference',
-    steps: [
-      'Coordinate with venue to activate all production equipment',
-      'Turn on LED walls, lighting rigs, intercom systems',
-      'Enable WiFi networks at expected capacity',
-      'Enable continuous logging in the monitor tab',
-      'Set alert thresholds: Warning at -65 dBm, Critical at -55 dBm',
-      'Monitor for 30+ minutes during equipment operation',
-      'Review event log for periodic interference patterns',
-      'Test with crowd simulation if possible (RF badges, phones)',
-      'Export the event log for documentation',
-      'Identify interference windows and correlate to equipment'
-    ],
-    analysis: [
-      'Stable noise floor: Proceed with selected frequencies',
-      'Periodic spikes: Identify source, consider frequency agility',
-      'Continuous interference: Change frequencies or mitigate source',
-      'Document all interference sources for event day reference'
-    ]
   }
 ];
+
+// Removed steps - see WIZARD_REMOVED_STEPS.md for reference
+// Previously included: initial-scan, frequency-selection, path-loss, interference-test
 
 // Antenna Configurations
 const ANTENNA_CONFIGS = [
@@ -1006,13 +981,28 @@ export default function RFSiteAssessment() {
   const addressInputRef = useRef(null);
   const autocompleteRef = useRef(null);
   
+  // IndexedDB project state
+  const [currentProjectId, setCurrentProjectId] = useState(null);
+  const [isLoadingProject, setIsLoadingProject] = useState(true);
+  
   // Application state
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [eventLog, setEventLog] = useState([]);
+  const [eventLogSearch, setEventLogSearch] = useState('');
+  const [eventLogFilter, setEventLogFilter] = useState('all');
   const [selectedTest, setSelectedTest] = useState(null);
   const [selectedAntenna, setSelectedAntenna] = useState(null);
   const [antennaRecommendation, setAntennaRecommendation] = useState(null);
+  const [collapsedSections, setCollapsedSections] = useState({
+    procedures: true,
+    antennas: true,
+    'Pre-Event Planning': true,
+    'Antenna Placement': true,
+    'Interference Mitigation': true,
+    'During Event': true,
+    'Venue-Specific': true
+  });
   
   // Wizard state
   const [showWizard, setShowWizard] = useState(false);
@@ -1063,16 +1053,25 @@ export default function RFSiteAssessment() {
   const [avgData, setAvgData] = useState([]);
   const [peakMarkers, setPeakMarkers] = useState([]);
   
+  // Delta encoding state for efficient spectrum transmission
+  const [baselineSpectrum, setBaselineSpectrum] = useState(null);
+  const [deltaEncodingEnabled, setDeltaEncodingEnabled] = useState(false);
+  const [deltaStats, setDeltaStats] = useState({ compressionRatio: 0, lastUpdate: null });
+  
+  // Web Worker for spectrum processing
+  const workerRef = useRef(null);
+  const [workerReady, setWorkerReady] = useState(false);
+  
   // Monitor settings
   const [monitorSettings, setMonitorSettings] = useState({
-    startFreqMHz: 1990,
-    endFreqMHz: 6000,
+    startFreqMHz: 4800,
+    endFreqMHz: 6100,
     showMaxHold: false,
     showAverage: false,
     autoLog: true,
     warningThreshold: -65,
     criticalThreshold: -55,
-    selectedBand: 'full' // 'full', 'band1', 'band2'
+    selectedBand: 'band2' // 'full', 'band1', 'band2'
   });
   
   // Show connection modal
@@ -1090,33 +1089,215 @@ export default function RFSiteAssessment() {
   const [searchingVenues, setSearchingVenues] = useState(false);
   const [showVenueDropdown, setShowVenueDropdown] = useState(false);
 
-  // Load saved wizard data from localStorage on mount
+  // Initialize Web Worker for spectrum processing
   useEffect(() => {
-    const savedData = localStorage.getItem('rfShowProfile');
-    if (savedData) {
-      try {
-        const parsed = JSON.parse(savedData);
-        setWizardData(parsed);
-        setSiteProfile({
-          venueName: parsed.venueName,
-          venueType: parsed.venueType,
-          date: parsed.setupDate,
-          notes: ''
-        });
-        logger.info('App', 'Loaded saved show profile from localStorage', { showName: parsed.showName });
-      } catch (e) {
-        logger.error('App', 'Failed to load saved profile', { error: e.message });
+    logger.info('Worker', 'Initializing spectrum processing worker');
+    const worker = new Worker(new URL('./workers/spectrumWorker.js', import.meta.url));
+    
+    worker.onmessage = (e) => {
+      const { type, payload } = e.data;
+      
+      switch (type) {
+        case 'WORKER_READY':
+          setWorkerReady(true);
+          logger.info('Worker', 'Spectrum processing worker ready', { timestamp: payload.timestamp });
+          break;
+          
+        case 'SWEEP_PROCESSED':
+          // Update state with processed data from worker
+          setSpectrumData(payload.spectrumData);
+          setMaxHoldData(payload.maxHoldData);
+          setAvgData(payload.avgData);
+          setPeakMarkers(payload.peakMarkers);
+          
+          // Add new events to event log
+          if (payload.events.length > 0) {
+            setEventLog(prev => [...payload.events, ...prev].slice(0, 500));
+          }
+          
+          // Update delta stats if present
+          if (payload.deltaStats) {
+            setDeltaStats(payload.deltaStats);
+          }
+          
+          // Update baseline if changed
+          if (payload.baselineSpectrum) {
+            setBaselineSpectrum(payload.baselineSpectrum);
+            setDeltaEncodingEnabled(true);
+          }
+          break;
+          
+        case 'MAX_HOLD_RESET':
+          logger.info('Worker', 'Max hold data reset');
+          break;
+          
+        case 'LOG':
+          // Forward worker logs to main logger
+          const { level, category, message, data } = payload;
+          logger[level](category, message, data);
+          break;
+          
+        case 'ERROR':
+          logger.error('Worker', 'Worker error', { 
+            message: payload.message, 
+            stack: payload.stack 
+          });
+          break;
+          
+        default:
+          logger.warn('Worker', 'Unknown message type from worker', { type });
       }
-    }
+    };
+    
+    worker.onerror = (error) => {
+      logger.error('Worker', 'Worker error event', { 
+        message: error.message,
+        filename: error.filename,
+        lineno: error.lineno
+      });
+    };
+    
+    workerRef.current = worker;
+    
+    return () => {
+      logger.info('Worker', 'Terminating spectrum processing worker');
+      worker.terminate();
+      setWorkerReady(false);
+    };
   }, []);
 
-  // Save wizard data to localStorage whenever it changes
+  // Initialize IndexedDB and load project data on mount
   useEffect(() => {
-    if (wizardData.showName) {
-      localStorage.setItem('rfShowProfile', JSON.stringify(wizardData));
-      logger.debug('App', 'Saved show profile to localStorage');
+    async function initializeApp() {
+      try {
+        setIsLoadingProject(true);
+        
+        // Initialize database
+        await openDatabase();
+        logger.info('App', 'IndexedDB initialized successfully');
+        
+        // Migrate from localStorage if needed
+        const localStorageData = localStorage.getItem('rfShowProfile');
+        if (localStorageData) {
+          try {
+            const parsed = JSON.parse(localStorageData);
+            logger.info('App', 'Migrating data from localStorage to IndexedDB');
+            
+            // Create project from localStorage data
+            const projectId = await saveProject({
+              showName: parsed.showName || 'Migrated Project',
+              ...parsed
+            });
+            
+            setCurrentProjectId(projectId);
+            setWizardData(parsed);
+            setSiteProfile({
+              venueName: parsed.venueName,
+              venueType: parsed.venueType,
+              date: parsed.setupDate,
+              notes: ''
+            });
+            
+            // Clear localStorage after successful migration
+            localStorage.removeItem('rfShowProfile');
+            logger.info('App', 'Successfully migrated from localStorage', { projectId });
+          } catch (e) {
+            logger.error('App', 'Failed to migrate from localStorage', { error: e.message });
+          }
+        }
+        
+        // Migrate collapsedSections
+        const collapsedSectionsData = localStorage.getItem('collapsedSections');
+        if (collapsedSectionsData) {
+          try {
+            const parsed = JSON.parse(collapsedSectionsData);
+            await saveSetting('collapsedSections', parsed);
+            setCollapsedSections(parsed);
+            localStorage.removeItem('collapsedSections');
+            logger.info('App', 'Migrated collapsedSections to IndexedDB');
+          } catch (e) {
+            logger.error('App', 'Failed to migrate collapsedSections', { error: e.message });
+          }
+        } else {
+          // Load from IndexedDB
+          const savedCollapsed = await getSetting('collapsedSections');
+          if (savedCollapsed) {
+            setCollapsedSections(savedCollapsed);
+          }
+        }
+        
+        // Migrate interferenceHistory
+        const interferenceHistoryData = localStorage.getItem('rfInterferenceHistory');
+        if (interferenceHistoryData) {
+          try {
+            const parsed = JSON.parse(interferenceHistoryData);
+            await saveSetting('interferenceHistory', parsed);
+            setInterferenceHistory(parsed);
+            localStorage.removeItem('rfInterferenceHistory');
+            logger.info('App', 'Migrated interferenceHistory to IndexedDB');
+          } catch (e) {
+            logger.error('App', 'Failed to migrate interferenceHistory', { error: e.message });
+          }
+        } else {
+          // Load from IndexedDB
+          const savedHistory = await getSetting('interferenceHistory', []);
+          if (savedHistory) {
+            setInterferenceHistory(savedHistory);
+          }
+        }
+        
+        // Load or create current project
+        if (!currentProjectId) {
+          const project = await getCurrentProject();
+          setCurrentProjectId(project.id);
+          
+          // Load project data into state
+          if (project.showName) {
+            setWizardData(project);
+            setSiteProfile({
+              venueName: project.venueName || '',
+              venueType: project.venueType || '',
+              date: project.setupDate || new Date().toISOString().split('T')[0],
+              notes: ''
+            });
+            logger.info('App', 'Loaded project from IndexedDB', { 
+              projectId: project.id, 
+              showName: project.showName 
+            });
+          }
+        }
+        
+        setIsLoadingProject(false);
+      } catch (error) {
+        logger.error('App', 'Failed to initialize IndexedDB', { error: error.message });
+        setIsLoadingProject(false);
+      }
     }
-  }, [wizardData]);
+    
+    initializeApp();
+  }, []);
+
+  // Save collapsed sections to IndexedDB whenever they change
+  useEffect(() => {
+    if (!isLoadingProject) {
+      saveSetting('collapsedSections', collapsedSections).catch(error => {
+        logger.error('App', 'Failed to save collapsedSections', { error: error.message });
+      });
+    }
+  }, [collapsedSections, isLoadingProject]);
+
+  // Save wizard data to IndexedDB whenever it changes
+  useEffect(() => {
+    if (!isLoadingProject && currentProjectId && wizardData.showName) {
+      saveProject({
+        id: currentProjectId,
+        ...wizardData
+      }).catch(error => {
+        logger.error('App', 'Failed to save project', { error: error.message });
+      });
+      logger.debug('App', 'Saved project to IndexedDB', { projectId: currentProjectId });
+    }
+  }, [wizardData, currentProjectId, isLoadingProject]);
 
   // Initialize Geoapify address autocomplete - TEMPORARILY DISABLED FOR DEBUGGING
   /*
@@ -1230,8 +1411,10 @@ export default function RFSiteAssessment() {
         // Add to history (keep last 10 reports)
         setInterferenceHistory(prev => {
           const updated = [timestampedData, ...prev].slice(0, 10);
-          // Save to localStorage
-          localStorage.setItem('rfInterferenceHistory', JSON.stringify(updated));
+          // Save to IndexedDB
+          saveSetting('interferenceHistory', updated).catch(error => {
+            logger.error('App', 'Failed to save interference history', { error: error.message });
+          });
           return updated;
         });
         
@@ -1249,19 +1432,42 @@ export default function RFSiteAssessment() {
       });
   }, [wizardData.locationData, wizardData.venueName, wizardData.venueAddress]);
   
-  // Load interference history from localStorage on mount
+  // Batch save event logs to IndexedDB (save every 50 events or when monitoring stops)
   useEffect(() => {
-    const savedHistory = localStorage.getItem('rfInterferenceHistory');
-    if (savedHistory) {
-      try {
-        const parsed = JSON.parse(savedHistory);
-        setInterferenceHistory(parsed);
-        logger.info('App', 'Loaded interference history from localStorage', { count: parsed.length });
-      } catch (e) {
-        logger.error('App', 'Failed to load interference history', { error: e.message });
-      }
+    if (!isLoadingProject && currentProjectId && eventLog.length > 0 && eventLog.length % 50 === 0) {
+      const eventsToSave = eventLog.slice(0, 50);
+      saveEventLogBatch(currentProjectId, eventsToSave).catch(error => {
+        logger.error('App', 'Failed to save event log batch', { error: error.message });
+      });
+      logger.debug('App', 'Saved event log batch to IndexedDB', { 
+        count: eventsToSave.length,
+        projectId: currentProjectId 
+      });
     }
-  }, []);
+  }, [eventLog.length, currentProjectId, isLoadingProject]);
+  
+  // Save remaining event logs when monitoring stops
+  useEffect(() => {
+    if (!isMonitoring && !isLoadingProject && currentProjectId && eventLog.length > 0) {
+      saveEventLogBatch(currentProjectId, eventLog).catch(error => {
+        logger.error('App', 'Failed to save event logs', { error: error.message });
+      });
+      logger.info('App', 'Saved all event logs to IndexedDB', { 
+        count: eventLog.length,
+        projectId: currentProjectId 
+      });
+    }
+  }, [isMonitoring, currentProjectId, eventLog, isLoadingProject]);
+  
+  // Cleanup blob URLs on component unmount
+  useEffect(() => {
+    return () => {
+      if (wizardData.floorPlan?.blobUrl) {
+        URL.revokeObjectURL(wizardData.floorPlan.blobUrl);
+        logger.debug('App', 'Revoked blob URL on unmount');
+      }
+    };
+  }, [wizardData.floorPlan?.blobUrl]);
   
   // Search venues using Geoapify Geocoding API
   const searchVenues = useCallback(async (query) => {
@@ -1344,69 +1550,29 @@ export default function RFSiteAssessment() {
     };
   }, []);
 
-  // Handle incoming sweep data
+  // Handle incoming sweep data - offload processing to Web Worker
   const handleSweepData = useCallback((sweepData) => {
-    const { data, timestamp } = sweepData;
+    if (!workerRef.current || !workerReady) {
+      logger.warn('Monitor', 'Worker not ready, skipping sweep data');
+      return;
+    }
     
-    setSpectrumData(data);
-    
-    // Update max hold
-    setMaxHoldData(prev => {
-      if (prev.length !== data.length) return data;
-      return data.map((point, i) => ({
-        frequency: point.frequency,
-        amplitude: Math.max(point.amplitude, prev[i]?.amplitude || -120)
-      }));
-    });
-    
-    // Update average (simple moving average)
-    setAvgData(prev => {
-      if (prev.length !== data.length) return data;
-      return data.map((point, i) => ({
-        frequency: point.frequency,
-        amplitude: (point.amplitude + (prev[i]?.amplitude || point.amplitude) * 9) / 10
-      }));
-    });
-    
-    // Find peaks
-    const peaks = [];
-    for (let i = 1; i < data.length - 1; i++) {
-      if (data[i].amplitude > data[i-1].amplitude && 
-          data[i].amplitude > data[i+1].amplitude &&
-          data[i].amplitude > -70) {
-        peaks.push(data[i]);
+    // Send data to worker for processing
+    workerRef.current.postMessage({
+      type: 'PROCESS_SWEEP',
+      payload: {
+        sweepData,
+        monitorSettings: {
+          autoLog: monitorSettings.autoLog,
+          criticalThreshold: monitorSettings.criticalThreshold,
+          warningThreshold: monitorSettings.warningThreshold
+        },
+        currentBaselineSpectrum: baselineSpectrum,
+        currentMaxHoldData: maxHoldData,
+        currentAvgData: avgData
       }
-    }
-    peaks.sort((a, b) => b.amplitude - a.amplitude);
-    setPeakMarkers(peaks.slice(0, 5));
-    
-    // Auto-log events
-    if (monitorSettings.autoLog) {
-      data.forEach(point => {
-        if (point.amplitude > monitorSettings.criticalThreshold) {
-          const newEvent = {
-            id: Date.now() + Math.random(),
-            timestamp: new Date(timestamp),
-            type: 'critical',
-            frequency: point.frequency,
-            strength: point.amplitude.toFixed(1),
-            message: `Critical interference at ${formatFrequency(point.frequency)}: ${point.amplitude.toFixed(1)} dBm`
-          };
-          setEventLog(prev => [newEvent, ...prev].slice(0, 500));
-        } else if (point.amplitude > monitorSettings.warningThreshold && Math.random() > 0.95) {
-          const newEvent = {
-            id: Date.now() + Math.random(),
-            timestamp: new Date(timestamp),
-            type: 'warning',
-            frequency: point.frequency,
-            strength: point.amplitude.toFixed(1),
-            message: `Elevated signal at ${formatFrequency(point.frequency)}: ${point.amplitude.toFixed(1)} dBm`
-          };
-          setEventLog(prev => [newEvent, ...prev].slice(0, 500));
-        }
-      });
-    }
-  }, [monitorSettings.autoLog, monitorSettings.criticalThreshold, monitorSettings.warningThreshold]);
+    });
+  }, [workerReady, monitorSettings.autoLog, monitorSettings.criticalThreshold, monitorSettings.warningThreshold, baselineSpectrum, maxHoldData, avgData]);
 
   // Connect to RF Explorer
   const connectDevice = async (method = 'serial') => {
@@ -1466,8 +1632,19 @@ export default function RFSiteAssessment() {
 
   // Clear max hold
   const clearMaxHold = () => {
+    logger.debug('Monitor', 'Clearing max hold data', { 
+      previousDataPoints: maxHoldData.length 
+    });
     setMaxHoldData([]);
     setAvgData([]);
+    
+    // Also reset worker's internal state
+    if (workerRef.current && workerReady) {
+      workerRef.current.postMessage({
+        type: 'RESET_MAX_HOLD',
+        payload: {}
+      });
+    }
   };
 
   // Simulate data for demo mode (when not connected)
@@ -1533,6 +1710,12 @@ export default function RFSiteAssessment() {
   const addTestResult = (testId, result) => {
     const test = TEST_PROCEDURES.find(t => t.id === testId);
     logger.info('Tests', `Test completed: ${test?.name || testId}`, { testId, passed: result.passed });
+    logger.debug('Tests', 'Test result details', { 
+      testId, 
+      testName: test?.name,
+      result,
+      totalResults: testResults.length + 1
+    });
     setTestResults(prev => [...prev, {
       id: Date.now(),
       testId,
@@ -1547,6 +1730,14 @@ export default function RFSiteAssessment() {
     logger.info('Reports', 'Exporting assessment report', { 
       testCount: testResults.length, 
       eventCount: eventLog.length 
+    });
+    logger.debug('Reports', 'Report export details', {
+      siteProfile,
+      testResults: testResults.length,
+      eventLogSize: eventLog.length,
+      peakMarkerCount: peakMarkers.length,
+      monitorSettings,
+      hasFloorPlan: !!wizardData?.floorPlan
     });
     const report = {
       siteProfile,
@@ -1586,12 +1777,43 @@ export default function RFSiteAssessment() {
 
   const tabs = [
     { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
-    { id: 'tests', label: 'Site Tests', icon: Activity },
-    { id: 'antennas', label: 'Antenna Guide', icon: Antenna },
-    { id: 'monitor', label: 'Live Monitor', icon: Radio },
+    { id: 'grid-testing', label: 'Grid Testing', icon: Target },
+    // { id: 'monitor', label: 'Live Monitor', icon: Radio },
+    { id: 'eventlog', label: 'Event Log', icon: List },
     { id: 'bestpractices', label: 'Best Practices', icon: BookOpen },
     { id: 'results', label: 'Results & Reports', icon: FileText },
   ];
+
+  // Show loading screen while IndexedDB initializes
+  if (isLoadingProject) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        backgroundColor: '#0a0e14',
+        color: '#c5cdd9',
+        fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', monospace",
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'column',
+        gap: '20px'
+      }}>
+        <Activity size={48} style={{ animation: 'spin 2s linear infinite' }} />
+        <div style={{ fontSize: '18px', fontWeight: 600 }}>
+          Initializing RF Site Assessment...
+        </div>
+        <div style={{ fontSize: '14px', color: '#8892a0' }}>
+          Loading project data from IndexedDB
+        </div>
+        <style>{`
+          @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+          }
+        `}</style>
+      </div>
+    );
+  }
 
   return (
     <div style={{
@@ -1720,7 +1942,11 @@ export default function RFSiteAssessment() {
                 Run with simulated data to explore the interface.
               </p>
               <button
-                onClick={() => { setShowConnectionModal(false); setIsMonitoring(true); }}
+                onClick={() => { 
+                  logger.debug('Connection', 'Closing connection modal and starting monitoring');
+                  setShowConnectionModal(false); 
+                  setIsMonitoring(true); 
+                }}
                 style={{
                   width: '100%',
                   padding: '12px',
@@ -1773,91 +1999,10 @@ export default function RFSiteAssessment() {
             }}>
               RF SITE ASSESSMENT
             </h1>
-            <p style={{ 
-              fontSize: '11px', 
-              color: '#6b7785',
-              letterSpacing: '0.05em',
-              textTransform: 'uppercase',
-              margin: '2px 0 0 0'
-            }}>
-              ABOnAir 612 + RF Explorer 6G WB Plus
-            </p>
           </div>
         </div>
         
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-          {/* Clear Cache Button - TEMPORARY */}
-          <button
-            onClick={() => {
-              if (confirm('Clear all cached data? This will reset the app and reload.')) {
-                localStorage.clear();
-                window.location.reload();
-              }
-            }}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '8px 12px',
-              backgroundColor: '#991b1b',
-              borderRadius: '6px',
-              border: '1px solid #dc2626',
-              color: '#fecaca',
-              fontSize: '11px',
-              fontWeight: '600',
-              cursor: 'pointer'
-            }}
-          >
-            <Trash2 size={12} />
-            Clear All Data
-          </button>
-          
-          {/* Connection Status */}
-          <button
-            onClick={() => connectionStatus.connected ? disconnectDevice() : setShowConnectionModal(true)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '8px 14px',
-              backgroundColor: connectionStatus.connected ? 'rgba(34, 197, 94, 0.15)' : '#1e2730',
-              borderRadius: '6px',
-              border: `1px solid ${connectionStatus.connected ? 'rgba(34, 197, 94, 0.3)' : '#2d3748'}`,
-              color: connectionStatus.connected ? '#22c55e' : '#c5cdd9',
-              fontSize: '12px',
-              cursor: 'pointer'
-            }}
-          >
-            <Usb size={14} />
-            {connectionStatus.connected 
-              ? `Connected (${connectionStatus.type === 'serial' ? 'USB' : 'WebSocket'})`
-              : 'Connect Device'
-            }
-          </button>
-          
-          {/* Monitoring Status */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '8px 12px',
-            backgroundColor: isMonitoring ? 'rgba(34, 197, 94, 0.15)' : 'rgba(107, 119, 133, 0.15)',
-            borderRadius: '6px',
-            border: `1px solid ${isMonitoring ? 'rgba(34, 197, 94, 0.3)' : 'rgba(107, 119, 133, 0.3)'}`
-          }}>
-            <div style={{
-              width: '8px',
-              height: '8px',
-              borderRadius: '50%',
-              backgroundColor: isMonitoring ? '#22c55e' : '#6b7785',
-              boxShadow: isMonitoring ? '0 0 8px #22c55e' : 'none',
-              animation: isMonitoring ? 'pulse 2s infinite' : 'none'
-            }} />
-            <span style={{ fontSize: '12px', color: isMonitoring ? '#22c55e' : '#6b7785' }}>
-              {isMonitoring ? (connectionStatus.connected ? 'LIVE' : 'DEMO') : 'STANDBY'}
-            </span>
-          </div>
-          
           <button
             onClick={exportReport}
             style={{
@@ -1875,7 +2020,7 @@ export default function RFSiteAssessment() {
             }}
           >
             <Download size={14} />
-            Export
+            Export Project
           </button>
         </div>
       </header>
@@ -1895,7 +2040,10 @@ export default function RFSiteAssessment() {
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                logger.debug('Navigation', 'Tab changed', { from: activeTab, to: tab.id });
+                setActiveTab(tab.id);
+              }}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -1936,146 +2084,34 @@ export default function RFSiteAssessment() {
             border: '2px solid #2d3748',
             overflow: 'hidden'
           }}>
-            {/* Wizard Header with Progress */}
-            <div style={{
-              padding: '24px',
-              borderBottom: '1px solid #2d3748',
-              backgroundColor: '#1a2332'
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                <h2 style={{ fontSize: '24px', color: '#e6edf3', margin: 0, fontWeight: '600' }}>
-                  {wizardStep === 0 ? 'Show Setup Wizard' : `Step ${wizardStep} of ${TEST_PROCEDURES.length}`}
-                </h2>
-                <button
-                  onClick={() => {
-                    if (wizardData.showName) {
-                      setShowWizard(false);
-                      logger.info('Wizard', 'Wizard closed - show profile exists');
-                    } else if (confirm('Are you sure? Your progress will not be saved.')) {
-                      setShowWizard(false);
-                      logger.warn('Wizard', 'Wizard closed without saving');
-                    }
-                  }}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: '#6b7785',
-                    cursor: 'pointer',
-                    padding: '8px'
-                  }}
-                >
-                  <X size={24} />
-                </button>
-              </div>
-              
-              {/* Progress Tracker */}
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                overflowX: 'auto',
-                paddingBottom: '4px'
-              }}>
-                {/* Getting Started Step */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 'fit-content' }}>
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    backgroundColor: wizardStep === 0 ? '#06b6d4' : wizardStep > 0 ? '#166534' : '#2d3748',
-                    transition: 'all 0.3s'
-                  }}>
-                    <div style={{
-                      width: '20px',
-                      height: '20px',
-                      borderRadius: '50%',
-                      backgroundColor: wizardStep === 0 ? '#0a0e14' : wizardStep > 0 ? '#22c55e' : '#6b7785',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '11px',
-                      fontWeight: '600',
-                      color: wizardStep === 0 ? '#06b6d4' : '#0a0e14'
-                    }}>
-                      {wizardStep > 0 ? '✓' : '0'}
-                    </div>
-                    <span style={{
-                      fontSize: '12px',
-                      fontWeight: '600',
-                      color: wizardStep === 0 ? '#0a0e14' : '#e6edf3'
-                    }}>
-                      Getting Started
-                    </span>
-                  </div>
-                  {TEST_PROCEDURES.length > 0 && (
-                    <div style={{
-                      width: '24px',
-                      height: '2px',
-                      backgroundColor: wizardStep > 0 ? '#06b6d4' : '#2d3748'
-                    }} />
-                  )}
-                </div>
-
-                {/* Test Procedure Steps */}
-                {TEST_PROCEDURES.map((test, idx) => {
-                  const stepNum = idx + 1;
-                  const isActive = wizardStep === stepNum;
-                  const isCompleted = wizardStep > stepNum;
-                  
-                  return (
-                    <div key={test.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 'fit-content' }}>
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        padding: '8px 12px',
-                        borderRadius: '6px',
-                        backgroundColor: isActive ? '#06b6d4' : isCompleted ? '#166534' : '#2d3748',
-                        transition: 'all 0.3s'
-                      }}>
-                        <div style={{
-                          width: '20px',
-                          height: '20px',
-                          borderRadius: '50%',
-                          backgroundColor: isActive ? '#0a0e14' : isCompleted ? '#22c55e' : '#6b7785',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: '11px',
-                          fontWeight: '600',
-                          color: isActive ? '#06b6d4' : '#0a0e14'
-                        }}>
-                          {isCompleted ? '✓' : stepNum}
-                        </div>
-                        <span style={{
-                          fontSize: '12px',
-                          fontWeight: '600',
-                          color: isActive ? '#0a0e14' : '#e6edf3',
-                          maxWidth: '120px',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap'
-                        }}>
-                          {test.name}
-                        </span>
-                      </div>
-                      {idx < TEST_PROCEDURES.length - 1 && (
-                        <div style={{
-                          width: '24px',
-                          height: '2px',
-                          backgroundColor: isCompleted ? '#06b6d4' : '#2d3748'
-                        }} />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
             {/* Wizard Content */}
-            <div style={{ padding: '40px' }}>
+            <div style={{ padding: '40px', position: 'relative' }}>
+              {/* Close button in top right of content */}
+              <button
+                onClick={() => {
+                  if (wizardData.showName) {
+                    setShowWizard(false);
+                    logger.info('Wizard', 'Wizard closed - show profile exists');
+                  } else if (confirm('Are you sure? Your progress will not be saved.')) {
+                    setShowWizard(false);
+                    logger.warn('Wizard', 'Wizard closed without saving');
+                  }
+                }}
+                style={{
+                  position: 'absolute',
+                  top: '16px',
+                  right: '16px',
+                  background: 'none',
+                  border: 'none',
+                  color: '#6b7785',
+                  cursor: 'pointer',
+                  padding: '8px',
+                  zIndex: 10
+                }}
+              >
+                <X size={24} />
+              </button>
+              
               {/* Step 0: Basic Information */}
               {wizardStep === 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
@@ -2732,9 +2768,46 @@ export default function RFSiteAssessment() {
                           </p>
                           <FloorPlanUpload
                             onUploadComplete={(floorPlan) => {
-                              console.log('📝 Floor plan uploaded to wizard:', floorPlan);
-                              setWizardData(prev => ({ ...prev, floorPlan }));
-                              logger.info('Wizard', 'Floor plan uploaded', { name: floorPlan.name });
+                              // Convert base64 to blob URL for efficient memory usage
+                              if (floorPlan?.image) {
+                                // Revoke old blob URL if exists
+                                if (wizardData.floorPlan?.blobUrl) {
+                                  URL.revokeObjectURL(wizardData.floorPlan.blobUrl);
+                                }
+                                
+                                // Convert base64 to blob
+                                const base64Parts = floorPlan.image.split(',');
+                                const contentType = base64Parts[0].split(':')[1].split(';')[0];
+                                const raw = atob(base64Parts[1]);
+                                const rawLength = raw.length;
+                                const uInt8Array = new Uint8Array(rawLength);
+                                for (let i = 0; i < rawLength; i++) {
+                                  uInt8Array[i] = raw.charCodeAt(i);
+                                }
+                                const blob = new Blob([uInt8Array], { type: contentType });
+                                const blobUrl = URL.createObjectURL(blob);
+                                
+                                setWizardData(prev => ({ 
+                                  ...prev, 
+                                  floorPlan: {
+                                    ...floorPlan,
+                                    blobUrl,
+                                    base64: floorPlan.image // Keep original for export
+                                  }
+                                }));
+                                
+                                logger.info('Wizard', 'Floor plan uploaded and converted to blob URL', { 
+                                  name: floorPlan.filename,
+                                  blobSize: blob.size,
+                                  base64Size: floorPlan.image.length
+                                });
+                              } else if (!floorPlan) {
+                                // Floor plan removed
+                                if (wizardData.floorPlan?.blobUrl) {
+                                  URL.revokeObjectURL(wizardData.floorPlan.blobUrl);
+                                }
+                                setWizardData(prev => ({ ...prev, floorPlan: null }));
+                              }
                             }}
                           />
                         </div>
@@ -2748,16 +2821,16 @@ export default function RFSiteAssessment() {
                           height: 'calc(100vh - 300px)'
                         }}>
                           <FloorPlanCanvas
-                            floorPlanImage={wizardData.floorPlan?.image}
+                            floorPlanImage={wizardData.floorPlan?.blobUrl || wizardData.floorPlan?.base64 || wizardData.floorPlan?.image}
                             boundaries={wizardData.boundaries}
                             onBoundariesChange={(boundaries) => {
-                              console.log('🗺️ Boundaries updated:', boundaries.length);
+                              logger.debug('Wizard', 'Boundaries updated', { count: boundaries.length });
                               setWizardData(prev => ({ ...prev, boundaries }));
                             }}
                             gridConfig={wizardData.gridConfig}
                             showGrid={!!wizardData.gridConfig}
                             onGenerateGrid={(providedBoundary) => {
-                              console.log('🔧 Generate grid called in wizard');
+                              logger.debug('Wizard', 'Generate grid called');
                               const boundary = providedBoundary || wizardData.boundaries[0];
                               if (!boundary || !boundary.points) return;
                               
@@ -2781,7 +2854,7 @@ export default function RFSiteAssessment() {
                                 boundary: boundary.points
                               };
                               
-                              console.log('✅ Setting gridConfig in wizard:', grid);
+                              logger.debug('Wizard', 'Grid config set', { rows: grid.rows, cols: grid.cols, totalCells: grid.totalCells });
                               setWizardData(prev => ({ ...prev, gridConfig: grid }));
                               logger.info('Wizard', 'Grid generated', { rows: grid.rows, cols: grid.cols });
                             }}
@@ -2895,91 +2968,7 @@ export default function RFSiteAssessment() {
                         </div>
                       )}
                       
-                      {/* Action Buttons */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '20px' }}>
-                        {wizardData.floorPlan && wizardData.gridConfig && (
-                          <>
-                            {!wizardData.testingMode ? (
-                              <button
-                                onClick={() => {
-                                  console.log('🧪 Entering testing mode');
-                                  setWizardData(prev => ({ ...prev, testingMode: true }));
-                                  logger.info('Wizard', 'Switched to testing mode');
-                                }}
-                                style={{
-                                  padding: '12px 24px',
-                                  backgroundColor: '#06b6d4',
-                                  border: 'none',
-                                  borderRadius: '8px',
-                                  color: '#0a0e14',
-                                  fontSize: '14px',
-                                  fontWeight: '600',
-                                  cursor: 'pointer',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '8px'
-                                }}
-                              >
-                                <Activity size={18} />
-                                Start Testing Mode
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => {
-                                  console.log('✏️ Returning to edit mode');
-                                  setWizardData(prev => ({ ...prev, testingMode: false }));
-                                  logger.info('Wizard', 'Switched to edit mode');
-                                }}
-                                style={{
-                                  padding: '12px 24px',
-                                  backgroundColor: '#f59e0b',
-                                  border: 'none',
-                                  borderRadius: '8px',
-                                  color: '#0a0e14',
-                                  fontSize: '14px',
-                                  fontWeight: '600',
-                                  cursor: 'pointer',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '8px'
-                                }}
-                              >
-                                <MapPin size={18} />
-                                Back to Edit
-                              </button>
-                            )}
-                          </>
-                        )}
-                        
-                        <button
-                          onClick={() => {
-                            setWizardData(prev => ({
-                              ...prev,
-                              completedTests: { ...prev.completedTests, [test.id]: true }
-                            }));
-                            logger.info('Wizard', 'Floor plan mapping completed');
-                          }}
-                          disabled={!wizardData.floorPlan || !wizardData.gridConfig}
-                          style={{
-                            padding: '12px 24px',
-                            backgroundColor: (wizardData.floorPlan && wizardData.gridConfig) ? '#22c55e' : '#1f2937',
-                            border: 'none',
-                            borderRadius: '8px',
-                            color: (wizardData.floorPlan && wizardData.gridConfig) ? '#0a0e14' : '#6b7785',
-                            fontSize: '14px',
-                            fontWeight: '600',
-                            cursor: (wizardData.floorPlan && wizardData.gridConfig) ? 'pointer' : 'not-allowed',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                            opacity: (wizardData.floorPlan && wizardData.gridConfig) ? 1 : 0.5,
-                            marginLeft: 'auto'
-                          }}
-                        >
-                          <CheckCircle size={18} />
-                          {isCompleted ? 'Completed' : 'Mark as Complete'}
-                        </button>
-                      </div>
+                      {/* No testing mode buttons - floor plan setup complete when grid is generated */}
                     </div>
                   );
                 }
@@ -3348,6 +3337,7 @@ export default function RFSiteAssessment() {
               justifyContent: 'space-between',
               gap: '16px'
             }}>
+              {/* Previous Button - Hidden on step 0 */}
               <button
                 onClick={() => {
                   setWizardStep(Math.max(0, wizardStep - 1));
@@ -3365,7 +3355,8 @@ export default function RFSiteAssessment() {
                   cursor: wizardStep === 0 ? 'not-allowed' : 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '8px'
+                  gap: '8px',
+                  visibility: wizardStep === 0 ? 'hidden' : 'visible'
                 }}
               >
                 <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} />
@@ -3373,50 +3364,23 @@ export default function RFSiteAssessment() {
               </button>
 
               <div style={{ display: 'flex', gap: '12px' }}>
-                {wizardStep === TEST_PROCEDURES.length && (
+                {/* Next button for step 0 */}
+                {wizardStep === 0 && (
                   <button
                     onClick={() => {
-                      setSiteProfile({
-                        venueName: wizardData.venueName,
-                        venueType: wizardData.venueType,
-                        date: wizardData.setupDate,
-                        notes: ''
-                      });
-                      setShowWizard(false);
-                      logger.info('Wizard', 'Setup wizard completed', { showName: wizardData.showName });
-                    }}
-                    style={{
-                      padding: '12px 32px',
-                      backgroundColor: '#22c55e',
-                      border: 'none',
-                      borderRadius: '8px',
-                      color: '#0a0e14',
-                      fontSize: '14px',
-                      fontWeight: '600',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px'
-                    }}
-                  >
-                    <CheckCircle size={16} />
-                    Complete Setup
-                  </button>
-                )}
-                
-                {wizardStep < TEST_PROCEDURES.length && (
-                  <button
-                    onClick={() => {
-                      if (wizardStep === 0) {
-                        // Validate basic info
-                        if (!wizardData.showName || !wizardData.venueName || !wizardData.showStartDate || !wizardData.showEndDate || !wizardData.venueType || !wizardData.venueAddress) {
-                          alert('Please fill in all required fields before continuing.');
-                          return;
-                        }
-                        logger.info('Wizard', 'Basic info completed, starting tests', wizardData);
+                      // Validate basic info
+                      if (!wizardData.showName || !wizardData.venueName || !wizardData.showStartDate || !wizardData.showEndDate || !wizardData.venueType || !wizardData.venueAddress) {
+                        alert('Please fill in all required fields before continuing.');
+                        return;
                       }
-                      setWizardStep(wizardStep + 1);
-                      logger.debug('Wizard', `Advanced to step ${wizardStep + 1}`);
+                      setWizardStep(1);
+                      logger.info('Wizard', 'Basic info completed, advancing to floor plan', wizardData);
+                      logger.debug('Wizard', 'Wizard data state', { 
+                        step: 1,
+                        showName: wizardData.showName,
+                        venue: wizardData.venueName,
+                        dates: { start: wizardData.showStartDate, end: wizardData.showEndDate }
+                      });
                     }}
                     style={{
                       padding: '12px 32px',
@@ -3433,6 +3397,54 @@ export default function RFSiteAssessment() {
                     }}
                   >
                     Next
+                    <ChevronRight size={16} />
+                  </button>
+                )}
+                
+                {/* Complete Setup button for floor plan step */}
+                {wizardStep > 0 && wizardStep <= TEST_PROCEDURES.length && (
+                  <button
+                    onClick={() => {
+                      if (wizardStep === TEST_PROCEDURES.length) {
+                        // Last step (floor plan) - complete and close wizard
+                        if (!wizardData.floorPlan || !wizardData.gridConfig) {
+                          alert('Please complete the floor plan setup before finishing.');
+                          return;
+                        }
+                        setWizardData(prev => ({
+                          ...prev,
+                          completedTests: { ...prev.completedTests, 'floor-plan-mapping': true }
+                        }));
+                        setShowWizard(false);
+                        logger.info('Wizard', 'Floor plan setup completed, wizard closed');
+                        logger.debug('Wizard', 'Final wizard data', { 
+                          hasFloorPlan: !!wizardData.floorPlan,
+                          hasBoundary: !!wizardData.boundary,
+                          hasGridConfig: !!wizardData.gridConfig,
+                          equipmentCount: wizardData.equipment?.length || 0
+                        });
+                      } else {
+                        // Not used anymore since we only have 1 step, but kept for safety
+                        setWizardStep(wizardStep + 1);
+                      }
+                    }}
+                    disabled={wizardStep === TEST_PROCEDURES.length && (!wizardData.floorPlan || !wizardData.gridConfig)}
+                    style={{
+                      padding: '12px 32px',
+                      backgroundColor: (wizardStep === TEST_PROCEDURES.length && (!wizardData.floorPlan || !wizardData.gridConfig)) ? '#1f2937' : '#06b6d4',
+                      border: 'none',
+                      borderRadius: '8px',
+                      color: (wizardStep === TEST_PROCEDURES.length && (!wizardData.floorPlan || !wizardData.gridConfig)) ? '#6b7785' : '#0a0e14',
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      cursor: (wizardStep === TEST_PROCEDURES.length && (!wizardData.floorPlan || !wizardData.gridConfig)) ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      opacity: (wizardStep === TEST_PROCEDURES.length && (!wizardData.floorPlan || !wizardData.gridConfig)) ? 0.5 : 1
+                    }}
+                  >
+                    {wizardStep === TEST_PROCEDURES.length ? 'Complete Setup' : 'Next'}
                     <ChevronRight size={16} />
                   </button>
                 )}
@@ -3517,294 +3529,775 @@ export default function RFSiteAssessment() {
             {wizardData.showName && (
               <>
                 {/* Show Header Card */}
+                <div 
+                  style={{
+                    backgroundColor: '#141a23',
+                    borderRadius: '12px',
+                    border: '1px solid #1e2730',
+                    padding: '20px 32px',
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr 1fr',
+                    gap: '32px',
+                    cursor: 'pointer'
+                  }}
+                  onDoubleClick={() => {
+                    setShowWizard(true);
+                    setWizardStep(0);
+                    logger.info('App', 'Opening wizard to edit show details');
+                  }}
+                >
+                  {/* Show Name */}
+                  <div style={{ borderRight: '1px solid #2d3748', paddingRight: '32px' }}>
+                    <div style={{ fontSize: '20px', color: '#e6edf3', fontWeight: '600' }}>{wizardData.showName}</div>
+                    <h1 style={{ fontSize: '18px', color: '#e6edf3', margin: 0, fontWeight: '600', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {wizardData.showName}
+                    </h1>
+                  </div>
+                  
+                  {/* Location */}
+                  <div style={{ borderRight: '1px solid #2d3748', paddingRight: '32px' }}>
+                    <div style={{ fontSize: '15px', color: '#e6edf3', fontWeight: '500', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {wizardData.venueName}
+                    </div>
+                    {wizardData.venueAddress && (
+                      <div style={{ fontSize: '12px', color: '#6b7785', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {wizardData.venueAddress}
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Show Dates */}
+                  <div>
+                    <div style={{ fontSize: '15px', color: '#e6edf3', fontWeight: '500', whiteSpace: 'nowrap' }}>
+                      {new Date(wizardData.showStartDate).toLocaleDateString()} - {new Date(wizardData.showEndDate).toLocaleDateString()}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Live Monitor and Event Log Row - 3:1 ratio */}
+                <div style={{ 
+                  display: 'grid', 
+                  gridTemplateColumns: '3fr 1fr', 
+                  gap: '16px', 
+                  minHeight: '600px',
+                  height: 'calc(100vh - 280px)',
+                  maxHeight: 'calc(100vh - 280px)',
+                  overflow: 'hidden'
+                }}>
+                  {/* Live Monitor */}
+                  <div style={{
+                    backgroundColor: '#141a23',
+                    borderRadius: '12px',
+                    border: '1px solid #1e2730',
+                    padding: '20px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    overflow: 'hidden'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                      <h3 style={{ fontSize: '16px', color: '#e6edf3', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Radio size={18} />
+                        RF Spectrum (4.8-6.1 GHz)
+                      </h3>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#6b7785', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={monitorSettings.showMaxHold}
+                            onChange={(e) => setMonitorSettings(prev => ({ ...prev, showMaxHold: e.target.checked }))}
+                          />
+                          Max Hold
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#6b7785', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={monitorSettings.showAverage}
+                            onChange={(e) => setMonitorSettings(prev => ({ ...prev, showAverage: e.target.checked }))}
+                          />
+                          Average
+                        </label>
+                        <button
+                          onClick={() => {
+                            if (isMonitoring) {
+                              setIsMonitoring(false);
+                              logger.info('Monitor', 'Stopped monitoring');
+                            } else if (connectionStatus.connected) {
+                              setIsMonitoring(true);
+                              logger.info('Monitor', 'Started monitoring');
+                            } else {
+                              setShowConnectionModal(true);
+                            }
+                          }}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '6px 12px',
+                            backgroundColor: isMonitoring ? '#991b1b' : '#166534',
+                            border: 'none',
+                            borderRadius: '4px',
+                            color: '#fff',
+                            fontSize: '12px',
+                            fontWeight: '500',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          {isMonitoring ? <Pause size={14} /> : <Play size={14} />}
+                          {isMonitoring ? 'Stop' : 'Start'}
+                        </button>
+                      </div>
+                    </div>
+                    
+                    {/* Spectrum Display */}
+                    <div style={{
+                      flex: 1,
+                      backgroundColor: '#0a0e14',
+                      borderRadius: '8px',
+                      border: '1px solid #1e2730',
+                      padding: '12px',
+                      position: 'relative',
+                      overflow: 'hidden'
+                    }}>
+                      {/* Grid lines */}
+                      {[-40, -50, -60, -70, -80, -90].map(db => (
+                        <div
+                          key={db}
+                          style={{
+                            position: 'absolute',
+                            left: '40px',
+                            right: '12px',
+                            top: `${((db + 40) / -60) * 100 + 5}%`,
+                            borderTop: '1px dashed #1e2730'
+                          }}
+                        >
+                          <span style={{ 
+                            position: 'absolute', 
+                            left: '-35px', 
+                            top: '-7px', 
+                            fontSize: '9px', 
+                            color: '#4a5568' 
+                          }}>
+                            {db}
+                          </span>
+                        </div>
+                      ))}
+                      
+                      {/* Spectrum visualization */}
+                      <svg
+                        viewBox="0 0 100 100"
+                        style={{
+                          position: 'absolute',
+                          left: '45px',
+                          right: '12px',
+                          top: '12px',
+                          bottom: '30px',
+                          width: 'calc(100% - 57px)',
+                          height: 'calc(100% - 42px)'
+                        }}
+                        preserveAspectRatio="none"
+                      >
+                        {/* Noise threshold line */}
+                        <line
+                          x1="0"
+                          y1={100 - ((monitorSettings.warningThreshold + 100) / 60 * 100)}
+                          x2="100"
+                          y2={100 - ((monitorSettings.warningThreshold + 100) / 60 * 100)}
+                          stroke="#f59e0b"
+                          strokeWidth="0.3"
+                          strokeDasharray="2,2"
+                          opacity="0.6"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                        
+                        {/* Max Hold trace */}
+                        {monitorSettings.showMaxHold && maxHoldData.length > 0 && (
+                          <polyline
+                            points={maxHoldData.map((point, i) => {
+                              const x = (i / (maxHoldData.length - 1)) * 100;
+                              const y = 100 - ((point.amplitude + 100) / 60 * 100);
+                              return `${x},${y}`;
+                            }).join(' ')}
+                            fill="none"
+                            stroke="#ef4444"
+                            strokeWidth="0.5"
+                            opacity="0.6"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                        )}
+                        
+                        {/* Average trace */}
+                        {monitorSettings.showAverage && avgData.length > 0 && (
+                          <polyline
+                            points={avgData.map((point, i) => {
+                              const x = (i / (avgData.length - 1)) * 100;
+                              const y = 100 - ((point.amplitude + 100) / 60 * 100);
+                              return `${x},${y}`;
+                            }).join(' ')}
+                            fill="none"
+                            stroke="#22c55e"
+                            strokeWidth="0.5"
+                            opacity="0.6"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                        )}
+                        
+                        {/* Current trace */}
+                        {spectrumData.length > 0 && (
+                          <polyline
+                            points={spectrumData.map((point, i) => {
+                              const x = (i / (spectrumData.length - 1)) * 100;
+                              const y = 100 - ((point.amplitude + 100) / 60 * 100);
+                              return `${x},${y}`;
+                            }).join(' ')}
+                            fill="none"
+                            stroke="#06b6d4"
+                            strokeWidth="0.5"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                        )}
+                      </svg>
+                      
+                      {/* Frequency labels */}
+                      <div style={{
+                        position: 'absolute',
+                        bottom: '8px',
+                        left: '45px',
+                        right: '12px',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        fontSize: '9px',
+                        color: '#4a5568'
+                      }}>
+                        <span>{formatFrequency(monitorSettings.startFreqMHz)}</span>
+                        <span>{formatFrequency((monitorSettings.startFreqMHz + monitorSettings.endFreqMHz) / 2)}</span>
+                        <span>{formatFrequency(monitorSettings.endFreqMHz)}</span>
+                      </div>
+                    </div>
+                    
+                    {/* Status footer */}
+                    <div style={{ marginTop: '12px', fontSize: '11px', color: '#6b7785', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>
+                        {connectionStatus.connected ? '🟢 Connected' : '🔴 Disconnected'}
+                        {!connectionStatus.connected && isMonitoring && ' • Demo Mode'}
+                      </span>
+                      {peakMarkers.length > 0 && (
+                        <span style={{ color: getSignalStrengthColor(peakMarkers[0].amplitude) }}>
+                          Peak: {formatFrequency(peakMarkers[0].frequency)} @ {peakMarkers[0].amplitude.toFixed(1)} dBm
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right Column: Square Card + Event Log */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', height: '100%', overflow: 'hidden' }}>
+                    {/* Floor Plan Thumbnail */}
+                    <div 
+                      style={{
+                        backgroundColor: '#141a23',
+                        borderRadius: '12px',
+                        border: '1px solid #1e2730',
+                        padding: '16px',
+                        aspectRatio: '4 / 3',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        overflow: 'hidden',
+                        cursor: 'pointer',
+                        transition: 'border-color 0.2s'
+                      }}
+                      onClick={() => {
+                        logger.debug('Navigation', 'Floor plan card clicked, navigating to grid test');
+                        setActiveTab('grid-testing');
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.borderColor = '#06b6d4'}
+                      onMouseLeave={(e) => e.currentTarget.style.borderColor = '#1e2730'}
+                    >
+                      <div style={{ fontSize: '12px', color: '#6b7785', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <MapPin size={14} />
+                        Floor Plan
+                      </div>
+                      <div style={{
+                        flex: 1,
+                        backgroundColor: '#0a0e14',
+                        borderRadius: '6px',
+                        border: '1px solid #1e2730',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        overflow: 'hidden',
+                        position: 'relative'
+                      }}>
+                        {wizardData.floorPlan?.image ? (
+                          <img 
+                            src={wizardData.floorPlan.image} 
+                            alt="Floor plan" 
+                            style={{ 
+                              width: '100%', 
+                              height: '100%', 
+                              objectFit: 'contain'
+                            }} 
+                          />
+                        ) : (
+                          <div style={{ textAlign: 'center', color: '#4a5568', fontSize: '11px' }}>
+                            <FileText size={24} style={{ marginBottom: '8px', opacity: 0.5 }} />
+                            <div>No floor plan</div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Event Log Viewer */}
+                    <div 
+                      style={{
+                        backgroundColor: '#141a23',
+                        borderRadius: '12px',
+                        border: '1px solid #1e2730',
+                        padding: '20px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        overflow: 'hidden',
+                        flex: 1,
+                        cursor: 'pointer',
+                        transition: 'border-color 0.2s'
+                      }}
+                      onClick={() => setActiveTab('eventlog')}
+                      onMouseEnter={(e) => e.currentTarget.style.borderColor = '#06b6d4'}
+                      onMouseLeave={(e) => e.currentTarget.style.borderColor = '#1e2730'}
+                    >
+                      <div style={{ marginBottom: '16px' }}>
+                        <h3 style={{ fontSize: '16px', color: '#e6edf3', margin: '0 0 4px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <List size={18} />
+                          Event Log
+                        </h3>
+                        <div style={{ display: 'flex', gap: '12px', fontSize: '11px', color: '#6b7785' }}>
+                          <span style={{ color: '#ef4444' }}>{eventLog.filter(e => e.type === 'critical').length} Critical</span>
+                          <span style={{ color: '#f59e0b' }}>{eventLog.filter(e => e.type === 'warning').length} Warnings</span>
+                        </div>
+                      </div>
+                      
+                      {/* Log entries */}
+                      <div style={{ 
+                        flex: 1, 
+                        display: 'flex', 
+                        flexDirection: 'column', 
+                        gap: '6px', 
+                        overflowY: 'auto',
+                        paddingRight: '4px'
+                      }}>
+                        {eventLog.length === 0 ? (
+                          <div style={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            justifyContent: 'center',
+                            color: '#4a5568',
+                            fontSize: '12px',
+                            height: '100%',
+                            textAlign: 'center',
+                            padding: '20px'
+                          }}>
+                            No events logged yet
+                          </div>
+                        ) : (
+                          [...eventLog].reverse().map(event => (
+                            <div 
+                              key={event.id}
+                              style={{
+                                padding: '8px 10px',
+                                backgroundColor: event.type === 'critical' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(245, 158, 11, 0.1)',
+                                borderRadius: '4px',
+                                borderLeft: `2px solid ${event.type === 'critical' ? '#ef4444' : '#f59e0b'}`,
+                                fontSize: '11px'
+                              }}
+                            >
+                              <div style={{ color: '#6b7785', marginBottom: '2px', fontSize: '10px' }}>
+                                {formatTimestamp(event.timestamp)}
+                              </div>
+                              <div style={{ color: '#c5cdd9', lineHeight: '1.3' }}>
+                                {event.message}
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Grid Testing Tab */}
+        {activeTab === 'grid-testing' && (
+          <div style={{ display: 'grid', gap: '24px' }}>
+            {/* Validate floor plan exists */}
+            {!wizardData.floorPlan || !wizardData.gridConfig ? (
+              <div style={{
+                padding: '60px 40px',
+                backgroundColor: '#0d1117',
+                borderRadius: '12px',
+                border: '2px dashed #2d3748',
+                textAlign: 'center'
+              }}>
+                <Target size={64} color="#6b7785" style={{ margin: '0 auto 24px' }} />
+                <h3 style={{ fontSize: '20px', color: '#e6edf3', marginBottom: '16px' }}>
+                  Floor Plan Setup Required
+                </h3>
+                <p style={{ fontSize: '14px', color: '#6b7785', marginBottom: '24px', maxWidth: '500px', margin: '0 auto 24px' }}>
+                  Please complete the floor plan setup in the project wizard before testing
+                </p>
+                <button
+                  onClick={() => {
+                    logger.debug('Wizard', 'Opening project wizard', { currentData: wizardData });
+                    setShowWizard(true);
+                  }}
+                  style={{
+                    padding: '12px 24px',
+                    backgroundColor: '#06b6d4',
+                    border: 'none',
+                    borderRadius: '8px',
+                    color: '#0a0e14',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Open Project Wizard
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: '3fr 1fr', gap: '24px', minHeight: '700px' }}>
+                {/* Left Column: Interactive Test Map (3/4 width) */}
+                <div style={{
+                  backgroundColor: '#0d1117',
+                  borderRadius: '12px',
+                  border: '2px solid #2d3748',
+                  overflow: 'hidden',
+                  minHeight: '700px',
+                  height: 'calc(100vh - 200px)'
+                }}>
+                  <FloorPlanCanvas
+                  floorPlanImage={wizardData.floorPlan?.blobUrl || wizardData.floorPlan?.base64 || wizardData.floorPlan?.image}
+                  boundaries={wizardData.boundaries}
+                  onBoundariesChange={() => {}} // Read-only in testing mode
+                  gridConfig={wizardData.gridConfig}
+                  showGrid={true}
+                  onGenerateGrid={() => {}} // Disabled in testing mode
+                  gridRows={wizardData.gridRows}
+                  gridCols={wizardData.gridCols}
+                  onGridRowsChange={() => {}} // Disabled
+                  onGridColsChange={() => {}} // Disabled
+                  landmarks={wizardData.landmarks}
+                  onLandmarksChange={() => {}} // Read-only
+                  ledWalls={wizardData.ledWalls}
+                  onLedWallsChange={() => {}} // Read-only
+                  gridMeasurements={wizardData.gridMeasurements}
+                  onGridMeasurementsChange={(measurements) => setWizardData(prev => ({ ...prev, gridMeasurements: measurements }))}
+                  selectedGridCell={wizardData.selectedCell}
+                  onGridCellClick={(cell) => {
+                    console.log('🔲 Grid cell clicked:', cell);
+                    setWizardData(prev => ({ ...prev, selectedCell: cell }));
+                  }}
+                  testingMode={true} // Always in testing mode
+                  contextMenu={wizardData.contextMenu}
+                  onContextMenuChange={(menu) => {
+                    console.log('📋 Context menu:', menu);
+                    setWizardData(prev => ({ ...prev, contextMenu: menu }));
+                  }}
+                  clipboard={wizardData.clipboard}
+                  onCopyItem={() => {}} // Disabled
+                  onPasteItem={() => {}} // Disabled
+                  onClearCellMeasurement={(row, col) => {
+                    const cellKey = `${row}-${col}`;
+                    setWizardData(prev => {
+                      const newMeasurements = { ...prev.gridMeasurements };
+                      delete newMeasurements[cellKey];
+                      return { ...prev, gridMeasurements: newMeasurements, contextMenu: null };
+                    });
+                    logger.info('GridTesting', 'Cleared cell measurement', { row, col });
+                  }}
+                  onDeleteLedWall={() => {}} // Disabled
+                  onDeleteBoundaryByIndex={() => {}} // Disabled
+                  drawBoundaryMode={false}
+                  onDrawBoundaryModeChange={() => {}} // Disabled
+                  boundaryStrokeColor={wizardData.boundaryStrokeColor}
+                  onBoundaryColorChange={() => {}} // Disabled
+                  ledWallMode={false}
+                  onLedWallModeChange={() => {}} // Disabled
+                  ledWallColor={wizardData.ledWallColor}
+                  onLedWallColorChange={() => {}} // Disabled
+                  onDeleteLandmark={() => {}} // Disabled
+                  onAddWifiAP={() => {}} // Disabled
+                  onAddCommsRx={() => {}} // Disabled
+                  onUndo={() => {}}
+                  onRedo={() => {}}
+                  canUndo={false}
+                  canRedo={false}
+                />
+              </div>
+
+              {/* Right Column: Mini RF Spectrum + Report Recap (1/4 width) */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', height: '100%' }}>
+                {/* Mini RF Spectrum Visualizer */}
                 <div style={{
                   backgroundColor: '#141a23',
                   borderRadius: '12px',
                   border: '1px solid #1e2730',
-                  padding: '24px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center'
+                  padding: '16px',
+                  width: '100%',
+                  minHeight: '0',
+                  flex: '0 0 auto'
                 }}>
-                  <div>
-                    <h1 style={{ fontSize: '24px', color: '#e6edf3', margin: '0 0 8px 0' }}>
-                      {wizardData.showName}
-                    </h1>
-                    <div style={{ display: 'flex', gap: '24px', fontSize: '14px', color: '#6b7785' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <MapPin size={14} />
-                        {wizardData.venueName}
-                      </div>
-                      {wizardData.venueAddress && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <MapPin size={14} />
-                          {wizardData.venueAddress}
+                  <div style={{ width: '100%', paddingBottom: '75%', position: 'relative' }}>
+                    <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                        <h3 style={{ fontSize: '14px', color: '#e6edf3', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <Radio size={16} />
+                          RF Spectrum (4.8-6.1 GHz)
+                        </h3>
+                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                          <div style={{
+                            width: '6px',
+                            height: '6px',
+                            borderRadius: '50%',
+                            backgroundColor: isMonitoring ? '#22c55e' : '#6b7280',
+                            animation: isMonitoring ? 'pulse 2s ease-in-out infinite' : 'none'
+                          }} />
+                          <span style={{ fontSize: '10px', color: '#6b7785' }}>
+                            {isMonitoring ? 'LIVE' : 'IDLE'}
+                          </span>
                         </div>
+                      </div>
+                      <div style={{
+                        flex: 1,
+                        backgroundColor: '#0a0e14',
+                        borderRadius: '6px',
+                        border: '1px solid #1e2730',
+                        minHeight: 0,
+                        position: 'relative',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        padding: '8px 8px 20px 24px'
+                      }}>
+                        {/* Y-axis label */}
+                        <div style={{
+                          position: 'absolute',
+                          left: '2px',
+                          top: '50%',
+                          transform: 'translateY(-50%) rotate(-90deg)',
+                          fontSize: '9px',
+                          color: '#6b7785',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          Power (dBm)
+                        </div>
+                        
+                    <svg
+                      viewBox="0 0 100 100"
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        display: 'block'
+                      }}
+                      preserveAspectRatio="none"
+                    >
+                      {/* Noise threshold line */}
+                      <line
+                        x1="0"
+                        y1={100 - ((monitorSettings.warningThreshold + 100) / 60 * 100)}
+                        x2="100"
+                        y2={100 - ((monitorSettings.warningThreshold + 100) / 60 * 100)}
+                        stroke="#f59e0b"
+                        strokeWidth="0.3"
+                        strokeDasharray="2,2"
+                        opacity="0.6"
+                        vectorEffect="non-scaling-stroke"
+                      />
+                      
+                      {/* Noise threshold line */}
+                      <line
+                        x1="0"
+                        y1={100 - ((monitorSettings.warningThreshold + 100) / 60 * 100)}
+                        x2="100"
+                        y2={100 - ((monitorSettings.warningThreshold + 100) / 60 * 100)}
+                        stroke="#f59e0b"
+                        strokeWidth="0.3"
+                        strokeDasharray="2,2"
+                        opacity="0.6"
+                        vectorEffect="non-scaling-stroke"
+                      />
+                      
+                      {/* Current trace */}
+                      {spectrumData.length > 0 && (
+                        <polyline
+                          points={spectrumData.map((point, i) => {
+                            const x = (i / (spectrumData.length - 1)) * 100;
+                            const y = 100 - ((point.amplitude + 100) / 60 * 100);
+                            return `${x},${y}`;
+                          }).join(' ')}
+                          fill="none"
+                          stroke="#06b6d4"
+                          strokeWidth="0.5"
+                          vectorEffect="non-scaling-stroke"
+                        />
                       )}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <Clock size={14} />
-                        {new Date(wizardData.showStartDate).toLocaleDateString()} - {new Date(wizardData.showEndDate).toLocaleDateString()}
+                      {/* Max Hold trace */}
+                      {monitorSettings.showMaxHold && maxHoldData.length > 0 && (
+                        <polyline
+                          points={maxHoldData.map((point, i) => {
+                            const x = (i / (maxHoldData.length - 1)) * 100;
+                            const y = 100 - ((point.amplitude + 100) / 60 * 100);
+                            return `${x},${y}`;
+                          }).join(' ')}
+                          fill="none"
+                          stroke="#ef4444"
+                          strokeWidth="0.5"
+                          opacity="0.6"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                      )}
+                      {/* Average trace */}
+                      {monitorSettings.showAverage && avgData.length > 0 && (
+                        <polyline
+                          points={avgData.map((point, i) => {
+                            const x = (i / (avgData.length - 1)) * 100;
+                            const y = 100 - ((point.amplitude + 100) / 60 * 100);
+                            return `${x},${y}`;
+                          }).join(' ')}
+                          fill="none"
+                          stroke="#22c55e"
+                          strokeWidth="0.5"
+                          opacity="0.6"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                      )}
+                    </svg>
+                    
+                    {/* X-axis label */}
+                    <div style={{
+                      position: 'absolute',
+                      bottom: '4px',
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      fontSize: '9px',
+                      color: '#6b7785',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      Frequency (MHz)
+                    </div>
                       </div>
                     </div>
                   </div>
-                  <button
-                    onClick={() => {
-                      setShowWizard(true);
-                      setWizardStep(0);
-                      logger.info('App', 'Reopening setup wizard to edit show profile');
-                    }}
-                    style={{
-                      padding: '10px 20px',
-                      backgroundColor: '#1e2730',
-                      border: '1px solid #2d3748',
-                      borderRadius: '6px',
-                      color: '#06b6d4',
-                      fontSize: '14px',
-                      fontWeight: '500',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px'
-                    }}
-                  >
-                    <Settings size={16} />
-                    Review Setup
-                  </button>
                 </div>
 
-                {/* Quick Status Grid */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-                  {/* ABOnAir Band Status */}
-                  {ABONAIR_BANDS.map(band => {
-                    // Filter spectrum data for this band
-                    const bandData = spectrumData.filter(p => p.frequency >= band.start && p.frequency <= band.end);
-                    const maxSignal = bandData.length > 0 ? Math.max(...bandData.map(p => p.amplitude)) : -100;
-                    const quality = getSignalQuality(maxSignal);
+                {/* Report Recap */}
+                <div style={{
+                  backgroundColor: '#141a23',
+                  borderRadius: '12px',
+                  border: '1px solid #1e2730',
+                  padding: '16px',
+                  flex: 1,
+                  minHeight: 0,
+                  overflow: 'auto'
+                }}>
+                  <h3 style={{ fontSize: '14px', color: '#e6edf3', margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <BarChart3 size={16} />
+                    Test Summary
+                  </h3>
+                  {(() => {
+                    const measurements = Object.values(wizardData.gridMeasurements || {});
+                    const totalTests = measurements.length;
+                    
+                    if (totalTests === 0) {
+                      return (
+                        <div style={{
+                          padding: '24px',
+                          textAlign: 'center',
+                          color: '#6b7785',
+                          fontSize: '12px'
+                        }}>
+                          No tests completed yet. Click grid cells to run RF tests.
+                        </div>
+                      );
+                    }
+                    
+                    const avgPeak = measurements.reduce((sum, m) => sum + m.peakAmplitude, 0) / totalTests;
+                    const avgNoise = measurements.reduce((sum, m) => sum + m.noiseFloor, 0) / totalTests;
+                    const maxPeak = Math.max(...measurements.map(m => m.peakAmplitude));
+                    const minNoise = Math.min(...measurements.map(m => m.noiseFloor));
+                    
+                    const getQualityColor = (value) => {
+                      if (value < -75) return '#22c55e';
+                      if (value < -60) return '#eab308';
+                      if (value < -45) return '#f59e0b';
+                      return '#ef4444';
+                    };
                     
                     return (
-                      <div key={band.id} style={{
-                        backgroundColor: '#141a23',
-                        borderRadius: '12px',
-                        border: '1px solid #1e2730',
-                        padding: '20px'
-                      }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '16px' }}>
-                          <div>
-                            <h3 style={{ fontSize: '16px', color: '#e6edf3', margin: 0 }}>{band.name}</h3>
-                            <p style={{ fontSize: '12px', color: '#6b7785', margin: '4px 0 0 0' }}>{band.range}</p>
-                          </div>
-                          <div style={{
-                            padding: '4px 8px',
-                            backgroundColor: `${quality.color}20`,
-                            borderRadius: '4px',
-                            fontSize: '10px',
-                            fontWeight: '600',
-                            color: quality.color
-                          }}>
-                            {quality.label}
-                          </div>
-                        </div>
-                        <div style={{ 
-                      height: '50px', 
-                      backgroundColor: '#0d1117', 
-                      borderRadius: '6px',
-                      display: 'flex',
-                      alignItems: 'flex-end',
-                      padding: '4px',
-                      gap: '1px',
-                      overflow: 'hidden'
-                    }}>
-                      {bandData.length > 0 ? bandData.map((point, i) => {
-                        const height = Math.max(2, Math.min(100, ((point.amplitude + 100) / 60) * 100));
-                        return (
-                          <div
-                            key={i}
-                            style={{
-                              flex: 1,
-                              minWidth: '2px',
-                              height: `${height}%`,
-                              backgroundColor: getSignalStrengthColor(point.amplitude),
-                              borderRadius: '1px 1px 0 0',
-                              transition: 'height 0.1s'
-                            }}
-                          />
-                        );
-                      }) : (
-                        <div style={{ 
-                          width: '100%', 
-                          height: '100%', 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          justifyContent: 'center',
-                          color: '#4a5568',
-                          fontSize: '11px'
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <div style={{
+                          padding: '12px',
+                          backgroundColor: '#0a0e14',
+                          borderRadius: '6px',
+                          border: '1px solid #1e2730'
                         }}>
-                          No data
+                          <div style={{ fontSize: '11px', color: '#6b7785', marginBottom: '4px' }}>Tests Completed</div>
+                          <div style={{ fontSize: '20px', color: '#e6edf3', fontWeight: '600' }}>{totalTests}</div>
                         </div>
-                      )}
-                    </div>
-                    <div style={{ 
-                      display: 'flex', 
-                      justifyContent: 'space-between',
-                      marginTop: '8px',
-                      fontSize: '11px',
-                      color: '#6b7785'
-                    }}>
-                      <span>Peak: {maxSignal > -100 ? `${maxSignal.toFixed(1)} dBm` : '--'}</span>
-                      <span style={{ color: band.color }}>{band.range}</span>
-                    </div>
-                  </div>
-                );
-              })}
-
-              {/* Tests Completed */}
-              <div style={{
-                backgroundColor: '#141a23',
-                borderRadius: '12px',
-                border: '1px solid #1e2730',
-                padding: '20px'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '16px' }}>
-                  <div>
-                    <h3 style={{ fontSize: '16px', color: '#e6edf3', margin: 0 }}>Tests Completed</h3>
-                    <p style={{ fontSize: '12px', color: '#6b7785', margin: '4px 0 0 0' }}>Site assessment progress</p>
-                  </div>
-                  <Activity size={20} color="#f59e0b" />
-                </div>
-                <div style={{ fontSize: '36px', fontWeight: '600', color: '#e6edf3' }}>
-                  {testResults.length} <span style={{ fontSize: '16px', color: '#6b7785' }}>/ {TEST_PROCEDURES.length}</span>
-                </div>
-                <div style={{ 
-                  marginTop: '12px', 
-                  height: '6px', 
-                  backgroundColor: '#0d1117', 
-                  borderRadius: '3px',
-                  overflow: 'hidden'
-                }}>
-                  <div style={{
-                    width: `${(testResults.length / TEST_PROCEDURES.length) * 100}%`,
-                    height: '100%',
-                    backgroundColor: testResults.length === TEST_PROCEDURES.length ? '#22c55e' : '#f59e0b',
-                    transition: 'width 0.3s'
-                  }} />
-                </div>
-              </div>
-
-              {/* Event Log Summary */}
-              <div style={{
-                backgroundColor: '#141a23',
-                borderRadius: '12px',
-                border: '1px solid #1e2730',
-                padding: '20px'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '16px' }}>
-                  <div>
-                    <h3 style={{ fontSize: '16px', color: '#e6edf3', margin: 0 }}>Event Log</h3>
-                    <p style={{ fontSize: '12px', color: '#6b7785', margin: '4px 0 0 0' }}>RF anomalies detected</p>
-                  </div>
-                  <AlertTriangle size={20} color={eventLog.filter(e => e.type === 'critical').length > 0 ? '#ef4444' : '#6b7785'} />
-                </div>
-                <div style={{ display: 'flex', gap: '24px' }}>
-                  <div>
-                    <div style={{ fontSize: '24px', fontWeight: '600', color: '#ef4444' }}>
-                      {eventLog.filter(e => e.type === 'critical').length}
-                    </div>
-                    <div style={{ fontSize: '11px', color: '#6b7785' }}>Critical</div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: '24px', fontWeight: '600', color: '#f59e0b' }}>
-                      {eventLog.filter(e => e.type === 'warning').length}
-                    </div>
-                    <div style={{ fontSize: '11px', color: '#6b7785' }}>Warnings</div>
-                  </div>
+                        
+                        <div style={{
+                          padding: '12px',
+                          backgroundColor: '#0a0e14',
+                          borderRadius: '6px',
+                          border: '1px solid #1e2730'
+                        }}>
+                          <div style={{ fontSize: '11px', color: '#6b7785', marginBottom: '4px' }}>Avg Peak Level</div>
+                          <div style={{ fontSize: '20px', color: getQualityColor(avgPeak), fontWeight: '600' }}>
+                            {avgPeak.toFixed(1)} dBm
+                          </div>
+                        </div>
+                        
+                        <div style={{
+                          padding: '12px',
+                          backgroundColor: '#0a0e14',
+                          borderRadius: '6px',
+                          border: '1px solid #1e2730'
+                        }}>
+                          <div style={{ fontSize: '11px', color: '#6b7785', marginBottom: '4px' }}>Avg Noise Floor</div>
+                          <div style={{ fontSize: '20px', color: getQualityColor(avgNoise), fontWeight: '600' }}>
+                            {avgNoise.toFixed(1)} dBm
+                          </div>
+                        </div>
+                        
+                        <div style={{
+                          padding: '12px',
+                          backgroundColor: '#0a0e14',
+                          borderRadius: '6px',
+                          border: `1px solid ${getQualityColor(maxPeak)}`
+                        }}>
+                          <div style={{ fontSize: '11px', color: '#6b7785', marginBottom: '4px' }}>Worst Case Peak</div>
+                          <div style={{ fontSize: '18px', color: getQualityColor(maxPeak), fontWeight: '600' }}>
+                            {maxPeak.toFixed(1)} dBm
+                          </div>
+                        </div>
+                        
+                        <div style={{
+                          padding: '12px',
+                          backgroundColor: '#0a0e14',
+                          borderRadius: '6px',
+                          border: `1px solid ${getQualityColor(minNoise)}`
+                        }}>
+                          <div style={{ fontSize: '11px', color: '#6b7785', marginBottom: '4px' }}>Best Noise Floor</div>
+                          <div style={{ fontSize: '18px', color: getQualityColor(minNoise), fontWeight: '600' }}>
+                            {minNoise.toFixed(1)} dBm
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             </div>
-
-            {/* Peak Markers */}
-            {peakMarkers.length > 0 && (
-              <div style={{
-                backgroundColor: '#141a23',
-                borderRadius: '12px',
-                border: '1px solid #1e2730',
-                padding: '24px'
-              }}>
-                <h2 style={{ 
-                  fontSize: '14px', 
-                  color: '#6b7785', 
-                  textTransform: 'uppercase', 
-                  letterSpacing: '0.1em',
-                  marginBottom: '16px'
-                }}>
-                  Top Signal Peaks
-                </h2>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
-                  {peakMarkers.map((peak, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        padding: '12px 16px',
-                        backgroundColor: '#0d1117',
-                        borderRadius: '8px',
-                        borderLeft: `3px solid ${getSignalStrengthColor(peak.amplitude)}`
-                      }}
-                    >
-                      <div style={{ fontSize: '14px', color: '#e6edf3', fontWeight: '500' }}>
-                        {formatFrequency(peak.frequency)}
-                      </div>
-                      <div style={{ fontSize: '12px', color: getSignalStrengthColor(peak.amplitude) }}>
-                        {peak.amplitude.toFixed(1)} dBm
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Recent Events */}
-            {eventLog.length > 0 && (
-              <div style={{
-                backgroundColor: '#141a23',
-                borderRadius: '12px',
-                border: '1px solid #1e2730',
-                padding: '24px'
-              }}>
-                <h2 style={{ 
-                  fontSize: '14px', 
-                  color: '#6b7785', 
-                  textTransform: 'uppercase', 
-                  letterSpacing: '0.1em',
-                  marginBottom: '16px'
-                }}>
-                  Recent Events
-                </h2>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto' }}>
-                  {eventLog.slice(0, 10).map(event => (
-                    <div 
-                      key={event.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '12px',
-                        padding: '10px 12px',
-                        backgroundColor: event.type === 'critical' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(245, 158, 11, 0.1)',
-                        borderRadius: '6px',
-                        borderLeft: `3px solid ${event.type === 'critical' ? '#ef4444' : '#f59e0b'}`
-                      }}
-                    >
-                      <Clock size={14} color="#6b7785" />
-                      <span style={{ fontSize: '12px', color: '#6b7785', minWidth: '140px' }}>
-                        {formatTimestamp(event.timestamp)}
-                      </span>
-                      <span style={{ fontSize: '13px', color: '#c5cdd9' }}>
-                        {event.message}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-              </>
             )}
           </div>
         )}
@@ -4420,7 +4913,18 @@ export default function RFSiteAssessment() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                   <button
-                    onClick={() => connectionStatus.connected ? setIsMonitoring(!isMonitoring) : setShowConnectionModal(true)}
+                    onClick={() => {
+                      if (connectionStatus.connected) {
+                        logger.debug('Monitor', 'Toggling monitoring from navbar', { 
+                          currentState: isMonitoring,
+                          newState: !isMonitoring
+                        });
+                        setIsMonitoring(!isMonitoring);
+                      } else {
+                        logger.debug('Connection', 'Opening connection modal');
+                        setShowConnectionModal(true);
+                      }
+                    }}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -4470,7 +4974,13 @@ export default function RFSiteAssessment() {
                     <input
                       type="checkbox"
                       checked={monitorSettings.showMaxHold}
-                      onChange={(e) => setMonitorSettings(prev => ({ ...prev, showMaxHold: e.target.checked }))}
+                      onChange={(e) => {
+                        logger.debug('Monitor', 'Toggling max hold', { 
+                          from: monitorSettings.showMaxHold,
+                          to: e.target.checked
+                        });
+                        setMonitorSettings(prev => ({ ...prev, showMaxHold: e.target.checked }));
+                      }}
                     />
                     Max Hold
                   </label>
@@ -4478,7 +4988,13 @@ export default function RFSiteAssessment() {
                     <input
                       type="checkbox"
                       checked={monitorSettings.showAverage}
-                      onChange={(e) => setMonitorSettings(prev => ({ ...prev, showAverage: e.target.checked }))}
+                      onChange={(e) => {
+                        logger.debug('Monitor', 'Toggling average', { 
+                          from: monitorSettings.showAverage,
+                          to: e.target.checked
+                        });
+                        setMonitorSettings(prev => ({ ...prev, showAverage: e.target.checked }));
+                      }}
                     />
                     Average
                   </label>
@@ -4801,8 +5317,6 @@ export default function RFSiteAssessment() {
                 </div>
               </div>
               <div style={{ 
-                maxHeight: '300px', 
-                overflowY: 'auto',
                 backgroundColor: '#0a0e14',
                 borderRadius: '8px',
                 border: '1px solid #1e2730'
@@ -4812,46 +5326,55 @@ export default function RFSiteAssessment() {
                     No events recorded. {!isMonitoring && 'Start monitoring to capture RF anomalies.'}
                   </div>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    {eventLog.map((event, i) => (
-                      <div 
-                        key={event.id}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '12px',
-                          padding: '10px 16px',
-                          borderBottom: i < eventLog.length - 1 ? '1px solid #1e2730' : 'none',
-                          backgroundColor: event.type === 'critical' ? 'rgba(239, 68, 68, 0.05)' : 'transparent'
-                        }}
-                      >
-                        {event.type === 'critical' ? (
-                          <AlertTriangle size={14} color="#ef4444" />
-                        ) : (
-                          <AlertTriangle size={14} color="#f59e0b" />
-                        )}
-                        <span style={{ 
-                          fontSize: '11px', 
-                          color: '#6b7785', 
-                          fontFamily: 'monospace',
-                          minWidth: '150px'
-                        }}>
-                          {formatTimestamp(event.timestamp)}
-                        </span>
-                        <span style={{ 
-                          fontSize: '12px', 
-                          color: event.type === 'critical' ? '#ef4444' : '#f59e0b',
-                          fontWeight: '500',
-                          minWidth: '70px'
-                        }}>
-                          {event.type.toUpperCase()}
-                        </span>
-                        <span style={{ fontSize: '12px', color: '#c5cdd9' }}>
-                          {event.message}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                  <FixedSizeList
+                    height={300}
+                    itemCount={eventLog.length}
+                    itemSize={42}
+                    width="100%"
+                    style={{ scrollbarWidth: 'thin', scrollbarColor: '#2d3748 #0a0e14' }}
+                  >
+                    {({ index, style }) => {
+                      const event = eventLog[index];
+                      return (
+                        <div 
+                          style={{
+                            ...style,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '12px',
+                            padding: '10px 16px',
+                            borderBottom: index < eventLog.length - 1 ? '1px solid #1e2730' : 'none',
+                            backgroundColor: event.type === 'critical' ? 'rgba(239, 68, 68, 0.05)' : 'transparent'
+                          }}
+                        >
+                          {event.type === 'critical' ? (
+                            <AlertTriangle size={14} color="#ef4444" />
+                          ) : (
+                            <AlertTriangle size={14} color="#f59e0b" />
+                          )}
+                          <span style={{ 
+                            fontSize: '11px', 
+                            color: '#6b7785', 
+                            fontFamily: 'monospace',
+                            minWidth: '150px'
+                          }}>
+                            {formatTimestamp(event.timestamp)}
+                          </span>
+                          <span style={{ 
+                            fontSize: '12px', 
+                            color: event.type === 'critical' ? '#ef4444' : '#f59e0b',
+                            fontWeight: '500',
+                            minWidth: '70px'
+                          }}>
+                            {event.type.toUpperCase()}
+                          </span>
+                          <span style={{ fontSize: '12px', color: '#c5cdd9' }}>
+                            {event.message}
+                          </span>
+                        </div>
+                      );
+                    }}
+                  </FixedSizeList>
                 )}
               </div>
             </div>
@@ -4861,6 +5384,370 @@ export default function RFSiteAssessment() {
         {/* Best Practices Tab */}
         {activeTab === 'bestpractices' && (
           <div style={{ display: 'grid', gap: '24px' }}>
+            {/* RF Site Assessment Procedures */}
+            <div style={{
+              backgroundColor: '#141a23',
+              borderRadius: '12px',
+              border: '1px solid #1e2730'
+            }}>
+              <h2 
+                onClick={() => setCollapsedSections(prev => ({ ...prev, procedures: !prev.procedures }))}
+                style={{ 
+                  fontSize: '18px', 
+                  color: '#e6edf3',
+                  margin: 0,
+                  padding: '24px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  cursor: 'pointer',
+                  userSelect: 'none'
+                }}>
+                <div style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '8px',
+                  backgroundColor: '#1a2332',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <Activity size={18} color="#06b6d4" />
+                </div>
+                RF Site Assessment Procedures
+                <ChevronRight 
+                  size={20} 
+                  color="#6b7785" 
+                  style={{ 
+                    marginLeft: 'auto',
+                    transform: collapsedSections.procedures ? 'rotate(0deg)' : 'rotate(90deg)',
+                    transition: 'transform 0.2s'
+                  }} 
+                />
+              </h2>
+              {!collapsedSections.procedures && <div style={{ padding: '0 24px 24px 24px' }}>
+              
+              {/* Step 1: Initial Site RF Scan */}
+              <div style={{ marginBottom: '32px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '16px' }}>
+                  <h3 style={{ fontSize: '16px', color: '#06b6d4', margin: 0, fontWeight: '600' }}>
+                    1. Initial Site RF Scan
+                  </h3>
+                  <div style={{
+                    padding: '4px 12px',
+                    backgroundColor: '#1a2332',
+                    borderRadius: '6px',
+                    fontSize: '11px',
+                    color: '#06b6d4'
+                  }}>
+                    10-15 min
+                  </div>
+                </div>
+                <p style={{ fontSize: '13px', color: '#c5cdd9', marginBottom: '16px' }}>
+                  Comprehensive frequency sweep to identify existing RF activity
+                </p>
+                
+                <div style={{ backgroundColor: '#0d1117', padding: '16px', borderRadius: '8px', marginBottom: '12px' }}>
+                  <h4 style={{ fontSize: '12px', color: '#22c55e', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '12px' }}>
+                    Equipment Setup
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>• Power on RF Explorer 6G WB Plus (2 min) - Allow full warm-up for accurate readings</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>• Connect RF Explorer to computer via USB (30 sec) - Use high-quality USB cable</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>• Click "Connect Device" and select RF Explorer port (30 sec)</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>• Set frequency range to 1.9-6.1 GHz (1 min) - Covers both ABOnAir bands</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>• Enable "Max Hold" mode in monitor settings (30 sec)</div>
+                  </div>
+                </div>
+                
+                <div style={{ backgroundColor: '#0d1117', padding: '16px', borderRadius: '8px', marginBottom: '12px' }}>
+                  <h4 style={{ fontSize: '12px', color: '#22c55e', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '12px' }}>
+                    Venue Survey
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>• Walk entire venue perimeter while monitoring (5-8 min)</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>• Note signals above -60 dBm threshold - Orange/red markers indicate interference</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>• Document WiFi AP locations and LED wall positions</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>• Identify interference sources: DMX, intercom, lighting dimmers</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>• Record baseline noise floor with peak markers (2 min)</div>
+                  </div>
+                </div>
+                
+                <div style={{ backgroundColor: '#0a0e14', padding: '16px', borderRadius: '8px', borderLeft: '3px solid #06b6d4' }}>
+                  <h4 style={{ fontSize: '12px', color: '#6b7785', textTransform: 'uppercase', marginBottom: '8px' }}>Analysis Guide</h4>
+                  <div style={{ fontSize: '13px', color: '#c5cdd9', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div>• Noise floor below -80 dBm: <span style={{ color: '#22c55e' }}>Excellent conditions</span></div>
+                    <div>• Noise floor -80 to -70 dBm: <span style={{ color: '#22c55e' }}>Good conditions, proceed with caution</span></div>
+                    <div>• Noise floor -70 to -60 dBm: <span style={{ color: '#f59e0b' }}>Marginal, consider alternative frequencies</span></div>
+                    <div>• Noise floor above -60 dBm: <span style={{ color: '#ef4444' }}>Poor conditions, relocate or mitigate</span></div>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Step 2: Frequency Selection */}
+              <div style={{ marginBottom: '32px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '16px' }}>
+                  <h3 style={{ fontSize: '16px', color: '#06b6d4', margin: 0, fontWeight: '600' }}>
+                    2. Frequency Selection Test
+                  </h3>
+                  <div style={{
+                    padding: '4px 12px',
+                    backgroundColor: '#1a2332',
+                    borderRadius: '6px',
+                    fontSize: '11px',
+                    color: '#06b6d4'
+                  }}>
+                    15-20 min
+                  </div>
+                </div>
+                <p style={{ fontSize: '13px', color: '#c5cdd9', marginBottom: '16px' }}>
+                  Identify optimal operating frequencies within ABOnAir bands
+                </p>
+                
+                <div style={{ backgroundColor: '#0d1117', padding: '16px', borderRadius: '8px', marginBottom: '12px' }}>
+                  <h4 style={{ fontSize: '12px', color: '#22c55e', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '12px' }}>
+                    Procedure Steps
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>1. Review initial scan results for clear frequency windows</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>2. Use band selector to focus on ABOnAir Band 1 (1.99-2.50 GHz)</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>3. Enable "Average" mode and observe for 3 minutes</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>4. Document quietest 40 MHz segments using peak markers</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>5. Switch to Band 2 (4.90-6.00 GHz) and repeat</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>6. Cross-reference with local WiFi channel allocations</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>7. Verify FCC compliance for selected frequencies</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>8. Document primary and backup frequency selections</div>
+                  </div>
+                </div>
+                
+                <div style={{ backgroundColor: '#0a0e14', padding: '16px', borderRadius: '8px', borderLeft: '3px solid #06b6d4' }}>
+                  <h4 style={{ fontSize: '12px', color: '#6b7785', textTransform: 'uppercase', marginBottom: '8px' }}>Band Comparison</h4>
+                  <div style={{ fontSize: '13px', color: '#c5cdd9', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div>• Band 1 (2.4 GHz): Higher WiFi congestion, better penetration through obstacles</div>
+                    <div>• Band 2 (5 GHz): Less congestion, shorter range, requires better line-of-sight</div>
+                    <div>• Select frequencies at least 40 MHz away from strong signals</div>
+                    <div>• Always have 2-3 backup frequencies documented</div>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Step 3: Path Loss Assessment */}
+              <div style={{ marginBottom: '32px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '16px' }}>
+                  <h3 style={{ fontSize: '16px', color: '#06b6d4', margin: 0, fontWeight: '600' }}>
+                    3. Path Loss Assessment
+                  </h3>
+                  <div style={{
+                    padding: '4px 12px',
+                    backgroundColor: '#1a2332',
+                    borderRadius: '6px',
+                    fontSize: '11px',
+                    color: '#06b6d4'
+                  }}>
+                    20-30 min
+                  </div>
+                </div>
+                <p style={{ fontSize: '13px', color: '#c5cdd9', marginBottom: '16px' }}>
+                  Measure signal propagation throughout the venue
+                </p>
+                
+                <div style={{ backgroundColor: '#0d1117', padding: '16px', borderRadius: '8px', marginBottom: '12px' }}>
+                  <h4 style={{ fontSize: '12px', color: '#22c55e', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '12px' }}>
+                    Testing Steps
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>1. Position ABOnAir TX at planned camera location</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>2. Set TX to lowest power setting initially</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>3. Position RX at planned receiver location</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>4. Use RF Explorer to measure TX signal strength at RX position</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>5. Walk TX through all planned camera movement areas</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>6. Monitor signal strength variations in real-time</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>7. Use event logging to mark dead zones</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>8. Identify multipath reflection sources (metal, glass)</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>9. Increase TX power if needed to maintain {'>'}6 dB margin</div>
+                  </div>
+                </div>
+                
+                <div style={{ backgroundColor: '#0a0e14', padding: '16px', borderRadius: '8px', borderLeft: '3px solid #06b6d4' }}>
+                  <h4 style={{ fontSize: '12px', color: '#6b7785', textTransform: 'uppercase', marginBottom: '8px' }}>Signal Margin Guide</h4>
+                  <div style={{ fontSize: '13px', color: '#c5cdd9', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div>• Signal margin {'>'} 12 dB: <span style={{ color: '#22c55e' }}>Excellent, full mobility</span></div>
+                    <div>• Signal margin 6-12 dB: <span style={{ color: '#f59e0b' }}>Good, monitor during event</span></div>
+                    <div>• Signal margin {'<'} 6 dB: <span style={{ color: '#ef4444' }}>Critical, optimize antenna placement</span></div>
+                    <div>• Dead zones require antenna repositioning or diversity RX</div>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Step 4: Dynamic Interference Test */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '16px' }}>
+                  <h3 style={{ fontSize: '16px', color: '#06b6d4', margin: 0, fontWeight: '600' }}>
+                    4. Dynamic Interference Test
+                  </h3>
+                  <div style={{
+                    padding: '4px 12px',
+                    backgroundColor: '#1a2332',
+                    borderRadius: '6px',
+                    fontSize: '11px',
+                    color: '#06b6d4'
+                  }}>
+                    30+ min
+                  </div>
+                </div>
+                <p style={{ fontSize: '13px', color: '#c5cdd9', marginBottom: '16px' }}>
+                  Simulate event conditions to identify time-variant interference
+                </p>
+                
+                <div style={{ backgroundColor: '#0d1117', padding: '16px', borderRadius: '8px', marginBottom: '12px' }}>
+                  <h4 style={{ fontSize: '12px', color: '#22c55e', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '12px' }}>
+                    Test Protocol
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>1. Coordinate with venue to activate all production equipment</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>2. Turn on LED walls, lighting rigs, intercom systems</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>3. Enable WiFi networks at expected capacity</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>4. Enable continuous logging in monitor tab</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>5. Set alert thresholds: Warning at -65 dBm, Critical at -55 dBm</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>6. Monitor for 30+ minutes during equipment operation</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>7. Review event log for periodic interference patterns</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>8. Test with crowd simulation if possible</div>
+                    <div style={{ fontSize: '13px', color: '#c5cdd9' }}>9. Export event log for documentation</div>
+                  </div>
+                </div>
+                
+                <div style={{ backgroundColor: '#0a0e14', padding: '16px', borderRadius: '8px', borderLeft: '3px solid #06b6d4' }}>
+                  <h4 style={{ fontSize: '12px', color: '#6b7785', textTransform: 'uppercase', marginBottom: '8px' }}>Results Analysis</h4>
+                  <div style={{ fontSize: '13px', color: '#c5cdd9', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div>• Stable noise floor: Proceed with selected frequencies</div>
+                    <div>• Periodic spikes: Identify source, consider frequency agility</div>
+                    <div>• Continuous interference: Change frequencies or mitigate source</div>
+                    <div>• Document all interference sources for event day reference</div>
+                  </div>
+                </div>
+              </div>
+              </div>}
+            </div>
+            
+            {/* Antenna Configuration Guide */}
+            <div style={{
+              backgroundColor: '#141a23',
+              borderRadius: '12px',
+              border: '1px solid #1e2730'
+            }}>
+              <h2 
+                onClick={() => setCollapsedSections(prev => ({ ...prev, antennas: !prev.antennas }))}
+                style={{ 
+                  fontSize: '18px', 
+                  color: '#e6edf3',
+                  margin: 0,
+                  padding: '24px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  cursor: 'pointer',
+                  userSelect: 'none'
+                }}>
+                <div style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '8px',
+                  backgroundColor: '#1a2332',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <Antenna size={18} color="#06b6d4" />
+                </div>
+                Antenna Configuration Guide
+                <ChevronRight 
+                  size={20} 
+                  color="#6b7785" 
+                  style={{ 
+                    marginLeft: 'auto',
+                    transform: collapsedSections.antennas ? 'rotate(0deg)' : 'rotate(90deg)',
+                    transition: 'transform 0.2s'
+                  }} 
+                />
+              </h2>
+              {!collapsedSections.antennas && <div style={{ padding: '0 24px 24px 24px' }}>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '16px' }}>
+                {ANTENNA_CONFIGS.map(config => (
+                  <div key={config.id} style={{
+                    backgroundColor: '#0d1117',
+                    borderRadius: '8px',
+                    border: '1px solid #1e2730',
+                    padding: '20px'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'start', justifyContent: 'space-between', marginBottom: '12px' }}>
+                      <h3 style={{ fontSize: '15px', color: '#e6edf3', margin: 0, fontWeight: '600' }}>
+                        {config.name}
+                      </h3>
+                      <span style={{ fontSize: '11px', color: '#06b6d4', backgroundColor: '#1a2332', padding: '4px 10px', borderRadius: '4px' }}>
+                        {config.range}
+                      </span>
+                    </div>
+                    
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                      <div style={{ padding: '10px', backgroundColor: '#0a0e14', borderRadius: '6px' }}>
+                        <div style={{ fontSize: '10px', color: '#6b7785', marginBottom: '4px' }}>TX ANTENNA</div>
+                        <div style={{ fontSize: '12px', color: '#e6edf3' }}>{config.txAntenna}</div>
+                      </div>
+                      <div style={{ padding: '10px', backgroundColor: '#0a0e14', borderRadius: '6px' }}>
+                        <div style={{ fontSize: '10px', color: '#6b7785', marginBottom: '4px' }}>RX ANTENNA</div>
+                        <div style={{ fontSize: '12px', color: '#e6edf3' }}>{config.rxAntenna}</div>
+                      </div>
+                    </div>
+                    
+                    <div style={{ marginBottom: '12px' }}>
+                      <div style={{ fontSize: '11px', color: '#6b7785', textTransform: 'uppercase', marginBottom: '8px' }}>Best For</div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        {config.bestFor.map((item, i) => (
+                          <span key={i} style={{
+                            fontSize: '11px',
+                            padding: '4px 8px',
+                            backgroundColor: '#1a2332',
+                            borderRadius: '12px',
+                            color: '#06b6d4'
+                          }}>
+                            {item}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#22c55e', textTransform: 'uppercase', marginBottom: '6px' }}>Advantages</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          {config.pros.map((item, i) => (
+                            <div key={i} style={{ fontSize: '12px', color: '#c5cdd9', display: 'flex', gap: '6px' }}>
+                              <CheckCircle size={12} color="#22c55e" style={{ marginTop: '2px', flexShrink: 0 }} />
+                              <span>{item}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#f59e0b', textTransform: 'uppercase', marginBottom: '6px' }}>Considerations</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          {config.cons.map((item, i) => (
+                            <div key={i} style={{ fontSize: '12px', color: '#c5cdd9', display: 'flex', gap: '6px' }}>
+                              <AlertTriangle size={12} color="#f59e0b" style={{ marginTop: '2px', flexShrink: 0 }} />
+                              <span>{item}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              </div>}
+            </div>
+            
+            {/* Best Practices */}
             {BEST_PRACTICES.map(section => {
               const Icon = section.icon;
               return (
@@ -4869,18 +5756,22 @@ export default function RFSiteAssessment() {
                   style={{
                     backgroundColor: '#141a23',
                     borderRadius: '12px',
-                    border: '1px solid #1e2730',
-                    padding: '24px'
+                    border: '1px solid #1e2730'
                   }}
                 >
-                  <h2 style={{ 
-                    fontSize: '16px', 
-                    color: '#e6edf3',
-                    marginBottom: '20px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '12px'
-                  }}>
+                  <h2 
+                    onClick={() => setCollapsedSections(prev => ({ ...prev, [section.category]: !prev[section.category] }))}
+                    style={{ 
+                      fontSize: '16px', 
+                      color: '#e6edf3',
+                      margin: 0,
+                      padding: '24px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      cursor: 'pointer',
+                      userSelect: 'none'
+                    }}>
                     <div style={{
                       width: '36px',
                       height: '36px',
@@ -4893,7 +5784,17 @@ export default function RFSiteAssessment() {
                       <Icon size={18} color="#06b6d4" />
                     </div>
                     {section.category}
+                    <ChevronRight 
+                      size={20} 
+                      color="#6b7785" 
+                      style={{ 
+                        marginLeft: 'auto',
+                        transform: collapsedSections[section.category] ? 'rotate(0deg)' : 'rotate(90deg)',
+                        transition: 'transform 0.2s'
+                      }} 
+                    />
                   </h2>
+                  {!collapsedSections[section.category] && <div style={{ padding: '0 24px 24px 24px' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '12px' }}>
                     {section.practices.map((practice, i) => (
                       <div 
@@ -4932,9 +5833,307 @@ export default function RFSiteAssessment() {
                       </div>
                     ))}
                   </div>
+                  </div>}
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* Event Log Tab */}
+        {activeTab === 'eventlog' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            {/* Header and Controls */}
+            <div style={{
+              backgroundColor: '#141a23',
+              borderRadius: '12px',
+              border: '1px solid #1e2730',
+              padding: '20px 24px',
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr 1fr',
+              alignItems: 'center',
+              gap: '24px'
+            }}>
+              {/* Left: Title */}
+              <h2 style={{ fontSize: '20px', color: '#e6edf3', margin: 0, fontWeight: '600' }}>
+                Event Log
+              </h2>
+              
+              {/* Center: Statistics */}
+              <div style={{ 
+                display: 'flex', 
+                gap: '24px',
+                justifyContent: 'center'
+              }}>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '24px', color: '#ef4444', fontWeight: '600', lineHeight: 1 }}>
+                    {eventLog.filter(e => e.type === 'critical').length}
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#6b7785', marginTop: '4px' }}>
+                    Critical
+                  </div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '24px', color: '#f59e0b', fontWeight: '600', lineHeight: 1 }}>
+                    {eventLog.filter(e => e.type === 'warning').length}
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#6b7785', marginTop: '4px' }}>
+                    Warnings
+                  </div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '24px', color: '#6b7785', fontWeight: '600', lineHeight: 1 }}>
+                    {eventLog.length}
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#6b7785', marginTop: '4px' }}>
+                    Total
+                  </div>
+                </div>
+              </div>
+              
+              {/* Right: Action Buttons */}
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => {
+                    logger.debug('EventLog', 'Exporting event log', { 
+                      totalEvents: eventLog.length,
+                      criticalCount: eventLog.filter(e => e.type === 'critical').length,
+                      warningCount: eventLog.filter(e => e.type === 'warning').length
+                    });
+                    const logs = eventLog.map(e => `${formatTimestamp(e.timestamp)} [${e.type.toUpperCase()}] ${e.message}`).join('\n');
+                    const blob = new Blob([logs], { type: 'text/plain' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `rf-event-log-${new Date().toISOString().split('T')[0]}.txt`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    logger.info('EventLog', 'Exported event log', { count: eventLog.length });
+                  }}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: '#1e2730',
+                    border: '1px solid #2d3748',
+                    borderRadius: '6px',
+                    color: '#06b6d4',
+                    fontSize: '13px',
+                    fontWeight: '500',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  <Download size={14} />
+                  Export All
+                </button>
+                <button
+                  onClick={() => {
+                    if (window.confirm('Clear event log display? (Events will be hidden but not deleted)')) {
+                      logger.debug('EventLog', 'Clearing event log', { previousCount: eventLog.length });
+                      setEventLog([]);
+                      logger.info('EventLog', 'Cleared event log display');
+                    }
+                  }}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: '#1e2730',
+                    border: '1px solid #2d3748',
+                    borderRadius: '6px',
+                    color: '#ef4444',
+                    fontSize: '13px',
+                    fontWeight: '500',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  <Trash2 size={14} />
+                  Clear Display
+                </button>
+              </div>
+            </div>
+
+            {/* Search and Filters */}
+            <div style={{
+              backgroundColor: '#141a23',
+              borderRadius: '12px',
+              border: '1px solid #1e2730',
+              padding: '20px'
+            }}>
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <input
+                  type="text"
+                  placeholder="Search events..."
+                  value={eventLogSearch || ''}
+                  onChange={(e) => setEventLogSearch(e.target.value)}
+                  style={{
+                    flex: 1,
+                    minWidth: '300px',
+                    padding: '10px 12px',
+                    backgroundColor: '#0a0e14',
+                    border: '1px solid #2d3748',
+                    borderRadius: '6px',
+                    color: '#e6edf3',
+                    fontSize: '14px'
+                  }}
+                />
+                <select
+                  value={eventLogFilter || 'all'}
+                  onChange={(e) => setEventLogFilter(e.target.value)}
+                  style={{
+                    padding: '10px 12px',
+                    backgroundColor: '#0a0e14',
+                    border: '1px solid #2d3748',
+                    borderRadius: '6px',
+                    color: '#e6edf3',
+                    fontSize: '14px'
+                  }}
+                >
+                  <option value="all">All Events</option>
+                  <option value="critical">Critical Only</option>
+                  <option value="warning">Warnings Only</option>
+                </select>
+                {(eventLogSearch || eventLogFilter !== 'all') && (
+                  <button
+                    onClick={() => {
+                      logger.debug('EventLog', 'Exporting filtered event log', { 
+                        searchQuery: eventLogSearch,
+                        filter: eventLogFilter
+                      });
+                      const filtered = eventLog.filter(e => {
+                        const matchesSearch = !eventLogSearch || e.message.toLowerCase().includes(eventLogSearch.toLowerCase());
+                        const matchesFilter = eventLogFilter === 'all' || e.type === eventLogFilter;
+                        return matchesSearch && matchesFilter;
+                      });
+                      const logs = filtered.map(e => `${formatTimestamp(e.timestamp)} [${e.type.toUpperCase()}] ${e.message}`).join('\n');
+                      const blob = new Blob([logs], { type: 'text/plain' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `rf-event-log-filtered-${new Date().toISOString().split('T')[0]}.txt`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                      logger.info('EventLog', 'Exported filtered event log', { count: filtered.length });
+                    }}
+                    style={{
+                      padding: '10px 16px',
+                      backgroundColor: '#1e2730',
+                      border: '1px solid #2d3748',
+                      borderRadius: '6px',
+                      color: '#06b6d4',
+                      fontSize: '13px',
+                      fontWeight: '500',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    <Download size={14} />
+                    Export Results
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Event Log List */}
+            <div style={{
+              backgroundColor: '#141a23',
+              borderRadius: '12px',
+              border: '1px solid #1e2730',
+              padding: '24px',
+              minHeight: '500px',
+              maxHeight: 'calc(100vh - 400px)',
+              overflow: 'auto'
+            }}>
+              {(() => {
+                logger.debug('EventLog', 'Rendering event log', { 
+                  totalEvents: eventLog.length,
+                  searchQuery: eventLogSearch,
+                  filter: eventLogFilter
+                });
+                
+                const filtered = eventLog.filter(e => {
+                  const matchesSearch = !eventLogSearch || e.message.toLowerCase().includes(eventLogSearch.toLowerCase());
+                  const matchesFilter = !eventLogFilter || eventLogFilter === 'all' || e.type === eventLogFilter;
+                  return matchesSearch && matchesFilter;
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      height: '400px',
+                      color: '#4a5568',
+                      fontSize: '14px'
+                    }}>
+                      {eventLog.length === 0 ? 'No events logged yet' : 'No events match your search criteria'}
+                    </div>
+                  );
+                }
+
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    {[...filtered].reverse().map(event => (
+                      <div 
+                        key={event.id}
+                        style={{
+                          padding: '12px 16px',
+                          backgroundColor: event.type === 'critical' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(245, 158, 11, 0.1)',
+                          borderRadius: '6px',
+                          borderLeft: `3px solid ${event.type === 'critical' ? '#ef4444' : '#f59e0b'}`,
+                          display: 'grid',
+                          gridTemplateColumns: '1fr 3fr 1fr',
+                          gap: '16px',
+                          alignItems: 'center'
+                        }}
+                      >
+                        {/* Left: Tags and badges */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ 
+                            padding: '4px 8px',
+                            backgroundColor: event.type === 'critical' ? '#991b1b' : '#92400e',
+                            borderRadius: '4px',
+                            fontSize: '13px',
+                            fontWeight: '600',
+                            color: '#fff',
+                            textTransform: 'uppercase',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            {event.type}
+                          </span>
+                        </div>
+                        
+                        {/* Center: Log message */}
+                        <div style={{ 
+                          fontSize: '13px', 
+                          color: '#e6edf3',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {event.message}
+                        </div>
+                        
+                        {/* Right: Timestamp */}
+                        <div style={{ 
+                          fontSize: '13px', 
+                          color: '#6b7785',
+                          textAlign: 'right',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {formatTimestamp(event.timestamp)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
           </div>
         )}
 

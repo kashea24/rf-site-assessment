@@ -277,6 +277,7 @@ class RFExplorerSerial:
 class WebSocketBridge:
     """
     WebSocket server that bridges the webapp to RF Explorer.
+    Supports delta encoding for bandwidth optimization.
     """
     
     def __init__(self, rf_explorer: RFExplorerSerial, host: str = 'localhost', port: int = 8765):
@@ -284,12 +285,24 @@ class WebSocketBridge:
         self.host = host
         self.port = port
         self.clients: Set[websockets.WebSocketServerProtocol] = set()
+        self.client_settings = {}  # Per-client settings
         self.running = False
+        self.baseline_spectrum = {}  # Per-client baseline for delta encoding
     
     async def handler(self, websocket: websockets.WebSocketServerProtocol):
         """Handle WebSocket connection"""
         self.clients.add(websocket)
+        client_id = id(websocket)
         client_addr = websocket.remote_address
+        
+        # Initialize client settings
+        self.client_settings[client_id] = {
+            'use_delta_encoding': False,
+            'delta_threshold_db': 1.0,  # Only send if amplitude changed >1dB
+            'baseline_refresh_interval': 60,  # Refresh baseline every 60s
+            'last_baseline_time': time.time()
+        }
+        
         logger.info(f"Client connected: {client_addr}")
         
         try:
@@ -297,7 +310,8 @@ class WebSocketBridge:
             if self.rf_explorer.is_connected:
                 await websocket.send(json.dumps({
                     'type': 'connected',
-                    'config': asdict(self.rf_explorer.config)
+                    'config': asdict(self.rf_explorer.config),
+                    'features': ['delta_encoding']  # Advertise capabilities
                 }))
             
             async for message in websocket:
@@ -307,6 +321,8 @@ class WebSocketBridge:
             pass
         finally:
             self.clients.discard(websocket)
+            self.client_settings.pop(client_id, None)
+            self.baseline_spectrum.pop(client_id, None)
             logger.info(f"Client disconnected: {client_addr}")
     
     async def handle_client_message(self, websocket, message: str):
@@ -314,6 +330,7 @@ class WebSocketBridge:
         try:
             msg = json.loads(message)
             msg_type = msg.get('type')
+            client_id = id(websocket)
             
             if msg_type == 'command':
                 cmd = msg.get('command', '')
@@ -330,18 +347,117 @@ class WebSocketBridge:
                 
             elif msg_type == 'stop':
                 self.rf_explorer.stop_sweep()
+            
+            elif msg_type == 'enable_delta_encoding':
+                # Client requests delta encoding
+                enabled = msg.get('enabled', True)
+                self.client_settings[client_id]['use_delta_encoding'] = enabled
+                logger.info(f"Delta encoding {'enabled' if enabled else 'disabled'} for client {client_id}")
+                
+                # Send acknowledgment
+                await websocket.send(json.dumps({
+                    'type': 'delta_encoding_status',
+                    'enabled': enabled
+                }))
+            
+            elif msg_type == 'request_baseline':
+                # Client requests new baseline (for resync)
+                self.baseline_spectrum.pop(client_id, None)
+                logger.debug(f"Baseline reset requested for client {client_id}")
                 
         except json.JSONDecodeError:
             logger.warning(f"Invalid JSON from client: {message}")
     
+    def _generate_delta_sweep(self, client_id: int, full_sweep: dict) -> dict:
+        """
+        Generate delta-encoded sweep data.
+        Only includes points that changed significantly from baseline.
+        """
+        settings = self.client_settings.get(client_id, {})
+        threshold = settings.get('delta_threshold_db', 1.0)
+        current_time = time.time()
+        last_baseline_time = settings.get('last_baseline_time', 0)
+        refresh_interval = settings.get('baseline_refresh_interval', 60)
+        
+        # Check if baseline refresh needed
+        needs_refresh = (current_time - last_baseline_time) > refresh_interval
+        
+        # Get baseline for this client
+        baseline = self.baseline_spectrum.get(client_id)
+        
+        # If no baseline or refresh needed, send full spectrum as new baseline
+        if baseline is None or needs_refresh:
+            self.baseline_spectrum[client_id] = full_sweep['data'][:]
+            settings['last_baseline_time'] = current_time
+            return {
+                **full_sweep,
+                'baseline': True,
+                'encoding': 'full'
+            }
+        
+        # Generate deltas
+        deltas = []
+        for i, point in enumerate(full_sweep['data']):
+            if i >= len(baseline):
+                # New point added (shouldn't happen normally)
+                deltas.append({
+                    'index': i,
+                    'frequency': point['frequency'],
+                    'amplitude': point['amplitude']
+                })
+            else:
+                # Check if amplitude changed significantly
+                amp_diff = abs(point['amplitude'] - baseline[i]['amplitude'])
+                if amp_diff >= threshold:
+                    deltas.append({
+                        'index': i,
+                        'frequency': point['frequency'],  # Include for validation
+                        'amplitude': point['amplitude']
+                    })
+        
+        # Update baseline
+        for delta in deltas:
+            baseline[delta['index']] = {
+                'frequency': delta['frequency'],
+                'amplitude': delta['amplitude']
+            }
+        
+        # Calculate compression ratio
+        original_size = len(full_sweep['data']) * 16  # rough estimate: 16 bytes per point
+        delta_size = len(deltas) * 20  # rough estimate: 20 bytes per delta
+        compression_ratio = (1 - delta_size / original_size) * 100 if original_size > 0 else 0
+        
+        logger.debug(f"Delta sweep: {len(deltas)}/{len(full_sweep['data'])} points changed ({compression_ratio:.1f}% compression)")
+        
+        return {
+            'type': 'sweep',
+            'timestamp': full_sweep['timestamp'],
+            'config': full_sweep['config'],
+            'encoding': 'delta',
+            'deltas': deltas,
+            'baseline_age': current_time - last_baseline_time,
+            'compression_ratio': compression_ratio
+        }
+    
     async def broadcast(self, message: dict):
         """Broadcast message to all connected clients"""
         if self.clients:
-            data = json.dumps(message)
-            await asyncio.gather(
-                *[client.send(data) for client in self.clients],
-                return_exceptions=True
-            )
+            # Send to each client with their preferred encoding
+            for client in self.clients:
+                client_id = id(client)
+                settings = self.client_settings.get(client_id, {})
+                
+                # If this is a sweep and delta encoding is enabled, encode it
+                if message.get('type') == 'sweep' and settings.get('use_delta_encoding'):
+                    encoded_msg = self._generate_delta_sweep(client_id, message)
+                else:
+                    encoded_msg = message
+                
+                try:
+                    data = json.dumps(encoded_msg)
+                    await client.send(data)
+                except Exception as e:
+                    logger.error(f"Broadcast error to client {client_id}: {e}")
     
     async def read_loop(self):
         """Continuously read from RF Explorer and broadcast"""

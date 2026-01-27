@@ -1,7 +1,7 @@
-import { Activity, Maximize2, Pause, Play } from 'lucide-react';
+import { Activity, Maximize2, Pause, Play, Usb } from 'lucide-react';
 import { useState } from 'react';
 
-export default function LiveMonitor({ isConnected, currentReading, onTakeReading, isCapturing }) {
+export default function LiveMonitor({ isConnected, currentReading, onTakeReading, isCapturing, onConnectDevice }) {
   const [isPaused, setIsPaused] = useState(false);
   const [maxHold, setMaxHold] = useState(false);
 
@@ -21,7 +21,8 @@ export default function LiveMonitor({ isConnected, currentReading, onTakeReading
       backgroundColor: '#0d1117',
       border: '2px solid #2d3748',
       borderRadius: '8px',
-      padding: '16px'
+      padding: '16px',
+      position: 'relative'
     }}>
       {/* Header */}
       <div style={{
@@ -123,21 +124,60 @@ export default function LiveMonitor({ isConnected, currentReading, onTakeReading
         height: '200px',
         position: 'relative'
       }}>
+        {/* Grey overlay when disconnected */}
+        {!isConnected && (
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(42, 42, 46, 0.85)',
+            borderRadius: '6px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10
+          }}>
+            <button
+              onClick={onConnectDevice}
+              style={{
+                padding: '16px 32px',
+                backgroundColor: '#06b6d4',
+                border: 'none',
+                borderRadius: '8px',
+                color: '#fff',
+                fontSize: '16px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                boxShadow: '0 4px 12px rgba(6, 182, 212, 0.3)'
+              }}
+            >
+              <Usb size={20} />
+              Connect Device
+            </button>
+          </div>
+        )}
+
         {/* Frequency labels */}
         <div style={{
           display: 'flex',
           justifyContent: 'space-between',
           fontSize: '10px',
           color: '#6b7785',
-          marginBottom: '4px'
+          marginBottom: '4px',
+          opacity: isConnected ? 1 : 0.3
         }}>
-          <span>4900 MHz</span>
-          <span>5400 MHz</span>
-          <span>5875 MHz</span>
+          <span>4800 MHz</span>
+          <span>5450 MHz</span>
+          <span>6100 MHz</span>
         </div>
 
         {/* Spectrum Graph */}
-        <svg width="100%" height="160" style={{ display: 'block' }}>
+        <svg width="100%" height="160" style={{ display: 'block', opacity: isConnected ? 1 : 0.3 }}>
           {/* Grid lines */}
           {[0, 25, 50, 75, 100].map(y => (
             <line
@@ -165,24 +205,28 @@ export default function LiveMonitor({ isConnected, currentReading, onTakeReading
           ))}
 
           {/* Spectrum trace */}
-          <polyline
-            points={generateSpectrumData()}
-            fill="none"
-            stroke="#06b6d4"
-            strokeWidth="2"
-            opacity="0.8"
-          />
-          
-          {/* Fill under curve */}
-          <polyline
-            points={`0,160 ${generateSpectrumData()} 100,160`}
-            fill="#06b6d4"
-            opacity="0.1"
-          />
+          {isConnected && (
+            <>
+              <polyline
+                points={generateSpectrumData()}
+                fill="none"
+                stroke="#06b6d4"
+                strokeWidth="2"
+                opacity="0.8"
+              />
+              
+              {/* Fill under curve */}
+              <polyline
+                points={`0,160 ${generateSpectrumData()} 100,160`}
+                fill="#06b6d4"
+                opacity="0.1"
+              />
+            </>
+          )}
         </svg>
 
         {/* Current reading overlay */}
-        {currentReading && (
+        {currentReading && isConnected && (
           <div style={{
             position: 'absolute',
             top: '8px',
@@ -195,10 +239,11 @@ export default function LiveMonitor({ isConnected, currentReading, onTakeReading
             color: '#e6edf3'
           }}>
             <div style={{ fontWeight: '600', color: '#06b6d4', marginBottom: '4px' }}>
-              Current Reading
+              4800-6100 MHz Band
             </div>
-            <div>Peak: {currentReading.peak} dBm</div>
-            <div>Avg: {currentReading.average} dBm</div>
+            <div>Peak: {currentReading.peak?.toFixed(1)} dBm</div>
+            <div>Avg: {currentReading.average?.toFixed(1)} dBm</div>
+            <div>Floor: {currentReading.noiseFloor?.toFixed(1)} dBm</div>
           </div>
         )}
       </div>
