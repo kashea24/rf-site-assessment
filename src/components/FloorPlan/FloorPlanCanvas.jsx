@@ -67,6 +67,8 @@ export default function FloorPlanCanvas({
   const [draggingLandmark, setDraggingLandmark] = useState(null);
   const [dragStart, setDragStart] = useState(null);
   const [imageObj, setImageObj] = useState(null);
+  const [isCapturingSamples, setIsCapturingSamples] = useState(false);
+  const [samplingProgress, setSamplingProgress] = useState(0);
 
   // Load floor plan image
   useEffect(() => {
@@ -1297,7 +1299,7 @@ export default function FloorPlanCanvas({
           // Testing mode tools
           <>
             <button
-              onClick={() => {
+              onClick={async () => {
                 if (!selectedGridCell) {
                   logger.warn('FloorPlanCanvas', 'No cell selected for reading');
                   return;
@@ -1310,28 +1312,83 @@ export default function FloorPlanCanvas({
                   logger.warn('FloorPlanCanvas', 'No spectrum data available');
                   return;
                 }
-                logger.info('FloorPlanCanvas', 'Taking reading for cell', { row: selectedGridCell.row, col: selectedGridCell.col });
-                onTakeReading(selectedGridCell.row, selectedGridCell.col, spectrumData);
+                
+                // Start sampling process
+                setIsCapturingSamples(true);
+                setSamplingProgress(0);
+                logger.info('FloorPlanCanvas', 'Starting 5-sample reading for cell', { 
+                  row: selectedGridCell.row, 
+                  col: selectedGridCell.col 
+                });
+                
+                const samples = [];
+                
+                // Collect 5 samples at 1-second intervals
+                for (let i = 0; i < 5; i++) {
+                  // Capture current spectrum data
+                  if (spectrumData && spectrumData.length > 0) {
+                    samples.push([...spectrumData]);
+                  }
+                  setSamplingProgress(i + 1);
+                  
+                  // Wait 1 second before next sample (except after last sample)
+                  if (i < 4) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                  }
+                }
+                
+                // Average the samples
+                if (samples.length > 0) {
+                  const dataPointCount = samples[0].length;
+                  const averagedData = [];
+                  
+                  // For each data point position, average across all samples
+                  for (let i = 0; i < dataPointCount; i++) {
+                    let sum = 0;
+                    for (let j = 0; j < samples.length; j++) {
+                      sum += samples[j][i];
+                    }
+                    averagedData.push(sum / samples.length);
+                  }
+                  
+                  logger.info('FloorPlanCanvas', 'Completed averaging', { 
+                    samplesCollected: samples.length,
+                    dataPoints: averagedData.length 
+                  });
+                  
+                  onTakeReading(selectedGridCell.row, selectedGridCell.col, averagedData);
+                }
+                
+                setIsCapturingSamples(false);
+                setSamplingProgress(0);
               }}
-              disabled={!selectedGridCell || !spectrumData || spectrumData.length === 0}
-              title={!selectedGridCell ? "Select a grid cell first" : (!spectrumData || spectrumData.length === 0) ? "No spectrum data available" : "Take a Reading"}
+              disabled={!selectedGridCell || !spectrumData || spectrumData.length === 0 || isCapturingSamples}
+              title={
+                isCapturingSamples 
+                  ? `Capturing sample ${samplingProgress}/5...`
+                  : !selectedGridCell 
+                    ? "Select a grid cell first" 
+                    : (!spectrumData || spectrumData.length === 0) 
+                      ? "No spectrum data available" 
+                      : "Take 5 averaged readings (5 seconds)"
+              }
               style={{
                 padding: '8px 16px',
                 backgroundColor: '#1a2332',
                 border: 'none',
                 borderRadius: '4px',
-                cursor: (!selectedGridCell || !spectrumData || spectrumData.length === 0) ? 'not-allowed' : 'pointer',
+                cursor: (!selectedGridCell || !spectrumData || spectrumData.length === 0 || isCapturingSamples) ? 'not-allowed' : 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',
                 color: '#e6edf3',
                 fontSize: '13px',
                 fontWeight: '600',
-                opacity: (!selectedGridCell || !spectrumData || spectrumData.length === 0) ? 0.5 : 1
+                opacity: (!selectedGridCell || !spectrumData || spectrumData.length === 0 || isCapturingSamples) ? 0.5 : 1
               }}
             >
-              <Activity size={18} color={(!selectedGridCell || !spectrumData || spectrumData.length === 0) ? '#6b7785' : '#22c55e'} />
-              Take a Reading
+              <Activity size={18} color={(!selectedGridCell || !spectrumData || spectrumData.length === 0) ? '#6b7785' : isCapturingSamples ? '#f59e0b' : '#22c55e'} />
+              {isCapturingSamples ? `Sampling ${samplingProgress}/5...` : 'Take a Reading'}
             </button>
             <button
               onClick={() => {
