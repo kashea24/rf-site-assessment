@@ -29,12 +29,6 @@ function FloorPlanDemo() {
   const [clipboard, setClipboard] = useState(null);
 
   const handleFloorPlanUpload = (uploadedFloorPlan) => {
-    console.log('📝 Floor plan uploaded:', {
-      width: uploadedFloorPlan.width,
-      height: uploadedFloorPlan.height,
-      name: uploadedFloorPlan.name,
-      size: uploadedFloorPlan.size
-    });
     setFloorPlan(uploadedFloorPlan);
     logger.info('FloorPlanDemo', 'Floor plan uploaded', {
       name: uploadedFloorPlan.name,
@@ -43,17 +37,10 @@ function FloorPlanDemo() {
   };
 
   const handleGenerateGrid = (providedBoundary = null) => {
-    console.log('🔧 handleGenerateGrid called');
-    console.log('  - floorPlan exists:', !!floorPlan);
-    console.log('  - boundaries.length:', boundaries.length);
-    console.log('  - boundaries:', boundaries);
-    console.log('  - providedBoundary:', providedBoundary);
-    
     // Use provided boundary or get from state
     const boundaryToUse = providedBoundary || (boundaries.length > 0 ? boundaries[0] : null);
     
     if (!floorPlan || !boundaryToUse) {
-      console.log('  ❌ Early return: missing floorPlan or boundary');
       return;
     }
     
@@ -63,14 +50,10 @@ function FloorPlanDemo() {
     img.onload = () => {
       // Calculate boundary bounding box
       const boundary = boundaryToUse;
-      console.log('  - boundary:', boundary);
       
       if (!boundary.points || boundary.points.length === 0) {
-        console.log('  ❌ No boundary points');
         return;
       }
-      
-      console.log('  - boundary.points.length:', boundary.points.length);
       
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
       boundary.points.forEach(point => {
@@ -85,8 +68,6 @@ function FloorPlanDemo() {
       const boundaryCenterX = (minX + maxX) / 2;
       const boundaryCenterY = (minY + maxY) / 2;
       
-      console.log('  - Boundary bounds:', { minX, maxX, minY, maxY, boundaryWidth, boundaryHeight });
-      
       const grid = {
         rows: gridRows,
         cols: gridCols,
@@ -99,7 +80,6 @@ function FloorPlanDemo() {
         boundary: boundary.points
       };
       
-      console.log('  ✅ Setting gridConfig:', grid);
       setGridConfig(grid);
       setShowGrid(true);
       logger.info('FloorPlanDemo', 'Grid generated:', gridRows + 'x' + gridCols, 'Boundary bounds:', { minX, maxX, minY, maxY });
@@ -108,7 +88,6 @@ function FloorPlanDemo() {
   };
 
   const handleDeleteGrid = () => {
-    console.log('🗑️ Deleting grid and all measurements');
     setGridConfig(null);
     setShowGrid(false);
     setSelectedCell(null);
@@ -118,7 +97,6 @@ function FloorPlanDemo() {
 
   const handleConnectDevice = () => {
     const newState = !isConnected;
-    console.log(`🔌 ${newState ? 'Connecting' : 'Disconnecting'} RF Explorer device`);
     setIsConnected(newState);
     logger.info('FloorPlanDemo', 'Device connection toggled', { connected: newState });
   };
@@ -273,12 +251,10 @@ function FloorPlanDemo() {
 
   const handleClearAllData = () => {
     if (confirm('Clear all floor plan data and reload? This will remove the uploaded PDF, grid, and measurements.')) {
-      console.log('⚠️ CLEARING ALL DATA - Floor plan, grid, and measurements will be removed');
       logger.info('FloorPlanDemo', 'User confirmed: clearing all data and reloading');
       localStorage.clear();
       window.location.reload();
     } else {
-      console.log('❌ User cancelled data clear operation');
       logger.info('FloorPlanDemo', 'User cancelled data clear');
     }
   };
@@ -319,7 +295,6 @@ function FloorPlanDemo() {
           {!testingMode && (
             <button
               onClick={() => {
-                console.log('🧪 Entering testing mode');
                 logger.info('FloorPlanDemo', 'Switched to testing mode');
                 setTestingMode(true);
               }}
@@ -347,7 +322,6 @@ function FloorPlanDemo() {
           {testingMode && (
             <button
               onClick={() => {
-                console.log('✏️ Returning to edit mode');
                 logger.info('FloorPlanDemo', 'Switched to edit mode');
                 setTestingMode(false);
               }}

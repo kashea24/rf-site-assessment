@@ -46,7 +46,9 @@ export default function FloorPlanCanvas({
   clipboard,
   onCopyItem,
   onPasteItem,
-  onClearCellMeasurement
+  onClearCellMeasurement,
+  spectrumData = [],
+  onTakeReading
 }) {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -186,7 +188,6 @@ export default function FloorPlanCanvas({
   // Draw grid
   const drawGrid = (ctx, width, height, config) => {
     if (!config || !config.boundary) {
-      console.log('⚠️ drawGrid: No config or boundary');
       return;
     }
 
@@ -525,19 +526,14 @@ export default function FloorPlanCanvas({
         const col = Math.floor(relX / cellWidth);
         const row = Math.floor(relY / cellHeight);
         
-        console.log('Grid click check:', { row, col, relX, relY, x, y, offsetX: gridConfig.offsetX, offsetY: gridConfig.offsetY });
-        
         if (row >= 0 && row < gridConfig.rows && col >= 0 && col < gridConfig.cols) {
           const cellCenterX = gridConfig.offsetX + (col + 0.5) * cellWidth;
           const cellCenterY = gridConfig.offsetY + (row + 0.5) * cellHeight;
           
           // Check if cell center is inside boundary
           if (gridConfig.boundary && isPointInBoundary(cellCenterX, cellCenterY, { points: gridConfig.boundary })) {
-            console.log('✅ Grid cell clicked:', row, col);
             onGridCellClick({ row, col, centerX: cellCenterX, centerY: cellCenterY });
             return; // Don't start panning if we clicked a cell
-          } else {
-            console.log('❌ Grid cell outside boundary:', row, col);
           }
         }
       }
@@ -843,10 +839,6 @@ export default function FloorPlanCanvas({
 
   // Close stroke - connect last to first and complete
   const closeStroke = () => {
-    console.log('✂️ closeStroke called');
-    console.log('  - drawBoundaryMode:', drawBoundaryMode);
-    console.log('  - drawingPath.length:', drawingPath.length);
-    
     if (drawBoundaryMode && drawingPath.length >= 2) {
       const newBoundary = {
         id: Date.now(),
@@ -855,22 +847,17 @@ export default function FloorPlanCanvas({
         points: [...drawingPath]
       };
       
-      console.log('  - Creating boundary with points:', newBoundary.points.length);
       onBoundariesChange([...boundaries, newBoundary]);
       setDrawingPath([]);
       onDrawBoundaryModeChange?.(false);
       
       // Auto-generate grid after closing boundary
       // Pass the boundary directly to avoid async state issues
-      console.log('  - Setting timeout to call onGenerateGrid with boundary');
       setTimeout(() => {
-        console.log('  - ⏰ Timeout fired, calling onGenerateGrid with boundary:', newBoundary);
         onGenerateGrid?.(newBoundary);
       }, 100);
       
       logger.info('FloorPlanCanvas', 'Boundary closed with', drawingPath.length, 'points');
-    } else {
-      console.log('  ❌ Not creating boundary: conditions not met');
     }
   };
 
@@ -1311,48 +1298,72 @@ export default function FloorPlanCanvas({
           <>
             <button
               onClick={() => {
-                logger.info('FloorPlanCanvas', 'Take Reading clicked');
-                // TODO: Implement take reading
+                if (!selectedGridCell) {
+                  logger.warn('FloorPlanCanvas', 'No cell selected for reading');
+                  return;
+                }
+                if (!onTakeReading) {
+                  logger.error('FloorPlanCanvas', 'onTakeReading callback not provided');
+                  return;
+                }
+                if (!spectrumData || spectrumData.length === 0) {
+                  logger.warn('FloorPlanCanvas', 'No spectrum data available');
+                  return;
+                }
+                logger.info('FloorPlanCanvas', 'Taking reading for cell', { row: selectedGridCell.row, col: selectedGridCell.col });
+                onTakeReading(selectedGridCell.row, selectedGridCell.col, spectrumData);
               }}
-              title="Take a Reading"
+              disabled={!selectedGridCell || !spectrumData || spectrumData.length === 0}
+              title={!selectedGridCell ? "Select a grid cell first" : (!spectrumData || spectrumData.length === 0) ? "No spectrum data available" : "Take a Reading"}
               style={{
                 padding: '8px 16px',
                 backgroundColor: '#1a2332',
                 border: 'none',
                 borderRadius: '4px',
-                cursor: 'pointer',
+                cursor: (!selectedGridCell || !spectrumData || spectrumData.length === 0) ? 'not-allowed' : 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',
                 color: '#e6edf3',
                 fontSize: '13px',
-                fontWeight: '600'
+                fontWeight: '600',
+                opacity: (!selectedGridCell || !spectrumData || spectrumData.length === 0) ? 0.5 : 1
               }}
             >
-              <Activity size={18} color="#22c55e" />
+              <Activity size={18} color={(!selectedGridCell || !spectrumData || spectrumData.length === 0) ? '#6b7785' : '#22c55e'} />
               Take a Reading
             </button>
             <button
               onClick={() => {
-                logger.info('FloorPlanCanvas', 'Delete Reading clicked');
-                // TODO: Implement delete reading
+                if (!selectedGridCell) {
+                  logger.warn('FloorPlanCanvas', 'No cell selected for deletion');
+                  return;
+                }
+                if (!onClearCellMeasurement) {
+                  logger.error('FloorPlanCanvas', 'onClearCellMeasurement callback not provided');
+                  return;
+                }
+                logger.info('FloorPlanCanvas', 'Deleting reading for cell', { row: selectedGridCell.row, col: selectedGridCell.col });
+                onClearCellMeasurement(selectedGridCell.row, selectedGridCell.col);
               }}
-              title="Delete Reading"
+              disabled={!selectedGridCell}
+              title={!selectedGridCell ? "Select a grid cell first" : "Delete Reading"}
               style={{
                 padding: '8px 16px',
                 backgroundColor: '#1a2332',
                 border: 'none',
                 borderRadius: '4px',
-                cursor: 'pointer',
+                cursor: !selectedGridCell ? 'not-allowed' : 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',
                 color: '#e6edf3',
                 fontSize: '13px',
-                fontWeight: '600'
+                fontWeight: '600',
+                opacity: !selectedGridCell ? 0.5 : 1
               }}
             >
-              <Trash2 size={18} color="#ef4444" />
+              <Trash2 size={18} color={!selectedGridCell ? '#6b7785' : '#ef4444'} />
               Delete Reading
             </button>
           </>

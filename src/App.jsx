@@ -556,7 +556,6 @@ class RFExplorerConnection {
     
     // Process response if needed
     const response = new TextDecoder().decode(this.buffer.slice(0, eolIdx));
-    console.log('RF Explorer response:', response);
     
     this.buffer = this.buffer.slice(eolIdx + 1);
     return true;
@@ -2870,24 +2869,20 @@ export default function RFSiteAssessment() {
                             onGridMeasurementsChange={(measurements) => setWizardData(prev => ({ ...prev, gridMeasurements: measurements }))}
                             selectedGridCell={wizardData.selectedCell}
                             onGridCellClick={(cell) => {
-                              console.log('🔲 Grid cell clicked:', cell);
                               setWizardData(prev => ({ ...prev, selectedCell: cell }));
                             }}
                             testingMode={wizardData.testingMode}
                             contextMenu={wizardData.contextMenu}
                             onContextMenuChange={(menu) => {
-                              console.log('📋 Context menu:', menu);
                               setWizardData(prev => ({ ...prev, contextMenu: menu }));
                             }}
                             clipboard={wizardData.clipboard}
                             onCopyItem={(item) => {
-                              console.log('📋 Copy item:', item);
                               setWizardData(prev => ({ ...prev, clipboard: { ...item, id: undefined }, contextMenu: null }));
                               logger.info('Wizard', 'Copied item to clipboard', { type: item.type });
                             }}
                             onPasteItem={(x, y) => {
                               if (!wizardData.clipboard) return;
-                              console.log('📋 Paste item at:', x, y);
                               
                               const newItem = {
                                 ...wizardData.clipboard,
@@ -2959,6 +2954,21 @@ export default function RFSiteAssessment() {
                                 ...prev,
                                 landmarks: [...prev.landmarks, { id: Date.now(), type: 'antenna', x: point.x, y: point.y }]
                               }));
+                            }}
+                            spectrumData={spectrumData}
+                            onTakeReading={(row, col, data) => {
+                              const cellKey = `${row}-${col}`;
+                              setWizardData(prev => ({
+                                ...prev,
+                                gridMeasurements: {
+                                  ...prev.gridMeasurements,
+                                  [cellKey]: {
+                                    spectrumData: data,
+                                    timestamp: new Date().toISOString()
+                                  }
+                                }
+                              }));
+                              logger.info('Wizard', 'Captured spectrum reading for cell', { row, col, dataPoints: data.length });
                             }}
                             onUndo={() => {}}
                             onRedo={() => {}}
@@ -3995,18 +4005,31 @@ export default function RFSiteAssessment() {
                   onGridMeasurementsChange={(measurements) => setWizardData(prev => ({ ...prev, gridMeasurements: measurements }))}
                   selectedGridCell={wizardData.selectedCell}
                   onGridCellClick={(cell) => {
-                    console.log('🔲 Grid cell clicked:', cell);
                     setWizardData(prev => ({ ...prev, selectedCell: cell }));
                   }}
                   testingMode={true} // Always in testing mode
                   contextMenu={wizardData.contextMenu}
                   onContextMenuChange={(menu) => {
-                    console.log('📋 Context menu:', menu);
                     setWizardData(prev => ({ ...prev, contextMenu: menu }));
                   }}
                   clipboard={wizardData.clipboard}
                   onCopyItem={() => {}} // Disabled
                   onPasteItem={() => {}} // Disabled
+                  spectrumData={spectrumData}
+                  onTakeReading={(row, col, data) => {
+                    const cellKey = `${row}-${col}`;
+                    setWizardData(prev => ({
+                      ...prev,
+                      gridMeasurements: {
+                        ...prev.gridMeasurements,
+                        [cellKey]: {
+                          spectrumData: data,
+                          timestamp: new Date().toISOString()
+                        }
+                      }
+                    }));
+                    logger.info('GridTesting', 'Captured spectrum reading for cell', { row, col, dataPoints: data.length });
+                  }}
                   onClearCellMeasurement={(row, col) => {
                     const cellKey = `${row}-${col}`;
                     setWizardData(prev => {

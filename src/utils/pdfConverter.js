@@ -13,42 +13,32 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
  */
 export async function pdfToImage(file, maxWidth = 2000, maxHeight = 2000) {
   try {
-    console.log('Starting PDF conversion...', file.name, file.size);
-    
     // Read file as array buffer
     const arrayBuffer = await file.arrayBuffer();
-    console.log('ArrayBuffer loaded, size:', arrayBuffer.byteLength);
     
     // Load PDF document
     const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-    console.log('Loading PDF document...');
     const pdf = await loadingTask.promise;
-    console.log('PDF loaded, pages:', pdf.numPages);
   
     // Get first page
     const page = await pdf.getPage(1);
-    console.log('Page loaded');
     
     // Calculate scale to fit within max dimensions
     const viewport = page.getViewport({ scale: 1.0 });
-    console.log('Original viewport:', viewport.width, 'x', viewport.height);
     
     const scale = Math.min(
       maxWidth / viewport.width,
       maxHeight / viewport.height,
       2.0 // Don't exceed 2x scale for quality
     );
-    console.log('Calculated scale:', scale);
     
     const scaledViewport = page.getViewport({ scale });
-    console.log('Scaled viewport:', scaledViewport.width, 'x', scaledViewport.height);
     
     // Create canvas
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
     canvas.width = scaledViewport.width;
     canvas.height = scaledViewport.height;
-    console.log('Canvas created');
     
     // Render PDF page to canvas
     const renderContext = {
@@ -56,13 +46,10 @@ export async function pdfToImage(file, maxWidth = 2000, maxHeight = 2000) {
       viewport: scaledViewport
     };
     
-    console.log('Starting render...');
     await page.render(renderContext).promise;
-    console.log('Render complete');
     
     // Convert canvas to data URL
     const imageData = canvas.toDataURL('image/png');
-    console.log('Image data URL created, length:', imageData.length);
     
     return imageData;
   } catch (error) {
